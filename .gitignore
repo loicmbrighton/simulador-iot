@@ -147,3 +147,8 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# Ferramentas de anatomia: atlas baixado e venv do Blender (recriados por baixar_z_anatomy.sh)
+tools/anatomia/.cache/
+# Backups automáticos do Blender
+*.blend1
