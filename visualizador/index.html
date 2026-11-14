@@ -172,8 +172,58 @@ const materiais = [];
 const ossos = {};
 const repouso = {};
 
-const gltf = await new GLTFLoader().loadAsync('paciente.json');
-document.getElementById('carregando').hidden = true;
+// A página publicada bloqueia fetch de URLs data:/blob:, então o carregador padrão do glTF não pode
+// buscar o buffer embutido. Baixamos o JSON com fetch relativo (permitido), decodificamos o base64 aqui
+// e montamos um .glb em memória para o GLTFLoader.parse.
+const aviso = document.getElementById('carregando');
+async function baixarPaciente() {
+  const resp = await fetch('paciente.json');
+  if (!resp.ok) throw new Error(`o servidor respondeu ${resp.status}`);
+  const total = Number(resp.headers.get('content-length')) || 13.9e6;
+  const reader = resp.body.getReader();
+  const partes = [];
+  let recebido = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    partes.push(value);
+    recebido += value.length;
+    aviso.textContent = `Carregando o paciente… ${Math.min(99, Math.round((recebido / total) * 100))}%`;
+  }
+  const bytes = new Uint8Array(recebido);
+  let o = 0;
+  for (const p of partes) { bytes.set(p, o); o += p.length; }
+  aviso.textContent = 'Preparando o modelo…';
+  const json = JSON.parse(new TextDecoder().decode(bytes));
+  const uri = json.buffers[0].uri;
+  const b64 = atob(uri.slice(uri.indexOf(',') + 1));
+  const bin = new Uint8Array(b64.length);
+  for (let i = 0; i < b64.length; i++) bin[i] = b64.charCodeAt(i);
+  delete json.buffers[0].uri;
+  const jsonBytes = new TextEncoder().encode(JSON.stringify(json));
+  const jl = Math.ceil(jsonBytes.length / 4) * 4, bl = Math.ceil(bin.length / 4) * 4;
+  const glb = new ArrayBuffer(12 + 8 + jl + 8 + bl);
+  const dv = new DataView(glb), u8 = new Uint8Array(glb);
+  dv.setUint32(0, 0x46546c67, true); dv.setUint32(4, 2, true); dv.setUint32(8, glb.byteLength, true);
+  dv.setUint32(12, jl, true); dv.setUint32(16, 0x4e4f534a, true); u8.set(jsonBytes, 20); u8.fill(0x20, 20 + jsonBytes.length, 20 + jl);
+  dv.setUint32(20 + jl, bl, true); dv.setUint32(24 + jl, 0x004e4942, true); u8.set(bin, 28 + jl);
+  // Texturas por <img> (TextureLoader) em vez de fetch + createImageBitmap, que a página também bloqueia.
+  const cib = window.createImageBitmap;
+  window.createImageBitmap = undefined;
+  try {
+    return await new GLTFLoader().parseAsync(glb, '');
+  } finally {
+    window.createImageBitmap = cib;
+  }
+}
+let gltf;
+try {
+  gltf = await baixarPaciente();
+} catch (e) {
+  aviso.textContent = `Não foi possível carregar o paciente: ${e.message}. Recarregue a página para tentar de novo.`;
+  throw e;
+}
+aviso.hidden = true;
 scene.add(gltf.scene);
 gltf.scene.traverse((o) => {
   if (o.isBone) { ossos[o.name] = o; repouso[o.name] = o.quaternion.clone(); }
