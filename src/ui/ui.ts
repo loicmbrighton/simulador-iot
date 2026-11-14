@@ -120,7 +120,7 @@ export class UI {
     resume.hidden = true;
     resume.onclick = () => this.onResume();
     actions.append(resume, start);
-    card.append(actions, el('p', 'note', 'Clique na cena para dar foco ao teclado. Use H durante o jogo para ver todos os comandos.'));
+    card.append(actions, el('p', 'note', 'Feito para computador com teclado e mouse. Clique na cena para dar foco ao teclado; H mostra todos os comandos.'));
     this.menu.append(card);
     this.syncMenu();
   }

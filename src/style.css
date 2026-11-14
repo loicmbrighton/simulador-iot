@@ -110,3 +110,8 @@ h2 { margin: 20px 0 10px; font-size: 14px; color: var(--muted); font-weight: 600
   padding: 8px 14px; border-radius: 10px; background: var(--hud); font-weight: 600; white-space: nowrap;
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+@media (prefers-reduced-motion: reduce) {
+  .toast, .option { transition: none; }
+}
+.option:focus-visible, .actions button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

@@ -69,7 +69,8 @@ src/
 Comandos:
 - `npm run dev`: servidor local. `npm test`: testes (Vitest). `npm run typecheck`.
 - `npx vite build && node tools/screenshots.mjs <pasta>`: screenshots de inspeção via Playwright.
-- `npm run build:artifact`: gera `dist-artifact/index.html` (arquivo único) para publicar como página de teste.
+- `npm run build:artifact`: gera `dist-artifact/pagina.html` (fragmento de arquivo único) que é publicado como a
+  página de teste do Claude: https://claude.ai/artifact/UQRGchnukeKB5bwgbfQNjk
 
 ## Fluxo de trabalho
 - Sessões do Claude são efêmeras: commitar e dar push com frequência.
