@@ -34,10 +34,12 @@ Pipeline em `tools/anatomia/`:
 2. `.cache/venv/bin/python -I extrair_via_aerea.py .cache/Z-Anatomy/Startup.blend ../../assets/fonte/via_aerea.blend`
 3. `.cache/venv/bin/python -I renderizar_vistas.py ../../assets/fonte/via_aerea.blend <pasta>`: 6 vistas + `painel.png`.
 
-Corpo do paciente: `gerar_paciente.py <mpfb2/src/mpfb/data> <saida.blend>` lê a malha-base e os targets do
-MakeHuman (CC0) **como dados** e aplica a mistura de macros (homem, 40 anos, fenótipo misto). Não rodar o
-código do MPFB (é código de terceiros). Pele, olhos, sobrancelhas e cabelo vêm do pacote de assets do
-MakeHuman (pendente: o host está bloqueado nesta rede).
+Corpo do paciente: `gerar_paciente.py <mpfb2/src/mpfb/data> <assets extraídos> <saida.blend>` lê a malha-base,
+os targets e os acessórios (.mhclo) do MakeHuman (CC0) **como dados**: homem, 40 anos, fenótipo misto, pele
+texturizada, olhos, sobrancelhas, cílios, cabelo curto, dentes e língua. Não rodar o código do MPFB.
+- Malha-base/targets: `git clone --depth 1 https://github.com/makehumancommunity/mpfb2`.
+- Assets: `https://files.makehumancommunity.org/asset_packs/makehuman_system_assets/makehuman_system_assets_cc0.zip`
+  (~280 MB; o ambiente de nuvem "simulador-iot" libera `static.` e `files.makehumancommunity.org`).
 
 O atlas é dado de terceiros: abrir sempre com `-I` e sem executar os scripts embutidos (já tratado nos scripts).
 
