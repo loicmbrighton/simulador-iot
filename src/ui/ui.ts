@@ -66,6 +66,7 @@ export class UI {
   private readonly topRight = el('div', 'topright');
   private readonly exerciseBox = el('div', 'exercise panel');
   private toastTimer = 0;
+  private readonly patientStatus = el('p', 'note status', 'Paciente: carregando…');
   choice: MenuChoice = { scenario: 'easy', scheme: 'duas-maos' };
   onStart: (c: MenuChoice) => void = () => {};
   onResume: () => void = () => {};
@@ -120,7 +121,7 @@ export class UI {
     resume.hidden = true;
     resume.onclick = () => this.onResume();
     actions.append(resume, start);
-    card.append(actions, el('p', 'note', 'Feito para computador com teclado e mouse. Clique na cena para dar foco ao teclado; H mostra todos os comandos.'));
+    card.append(this.patientStatus, actions, el('p', 'note', 'Feito para computador com teclado e mouse. Clique na cena para dar foco ao teclado; H mostra todos os comandos.'));
     this.menu.append(card);
     this.syncMenu();
   }
@@ -128,6 +129,10 @@ export class UI {
   private syncMenu(): void {
     this.menu.querySelectorAll<HTMLButtonElement>('[data-id]').forEach((b) => b.classList.toggle('selected', b.dataset.id === this.choice.scenario));
     this.menu.querySelectorAll<HTMLButtonElement>('[data-scheme]').forEach((b) => b.classList.toggle('selected', b.dataset.scheme === this.choice.scheme));
+  }
+
+  setPatientStatus(text: string): void {
+    this.patientStatus.textContent = text;
   }
 
   showMenu(paused: boolean): void {

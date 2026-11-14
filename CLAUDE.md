@@ -60,7 +60,7 @@ Via aérea interna: `gerar_via_aerea.py <paciente.blend> <saida.blend>` (precisa
 - Cores por região em atributo de vértice `cor` (mucosa, língua, epiglote, aritenoides, palato, pregas vocais).
 - `renderizar_via_aerea.py`: visão laringoscópica, ádito, cortes sagitais, boca aberta, via aérea isolada.
 - Resultado salvo em `assets/fonte/paciente.blend` (paciente completo) e `docs/referencias/via_aerea_v1.png`.
-- Visualizador 3D: `visualizador/index.html` + `visualizador/paciente.json` (glTF em JSON com dados embutidos;
+- Visualizador 3D: `visualizador/index.html` + `public/paciente.json` (publicar junto como `paciente.json`) (glTF em JSON com dados embutidos;
   páginas publicadas não servem `.glb`). Gerar com `exportar_glb.py` e converter o .glb para JSON (buffer em
   base64). Publicado em https://claude.ai/artifact/DvjkakWW9com4a3CFLRHje
 
@@ -81,7 +81,9 @@ Avaliação do recorte (`docs/referencias/z_anatomy_recorte_inicial.png`):
 src/
 ├── main.ts / app.ts      # entrada, estados (menu/jogo/pausa), loop, câmera, lógica de controle
 ├── config.ts             # sistema de coordenadas, cenários, alcance, postura do médico, velocidades
-├── core/world.ts         # sala, maca, paciente provisório (manequim), bandeja, monitor, luzes, colisões
+├── core/world.ts         # sala, maca, bandeja, monitor, luzes, colisões (manequim só até o paciente carregar)
+├── core/patient.ts       # paciente real: carrega public/paciente.json, deita na maca, posição olfativa,
+│                         # toalha sob o occipício, braços aduzidos, lençol moldado, landmarks e colisões
 ├── core/materials.ts     # materiais PBR compartilhados
 ├── hands/hand.ts, ik.ts  # mãos procedurais (dedos que fecham na empunhadura) + IK de dois ossos
 ├── tools/models.ts       # ferramentas procedurais com medidas reais
@@ -94,6 +96,9 @@ src/
 - Dois esquemas de controle selecionáveis (menu ou tecla V): **Duas mãos** (WASD = esquerda,
   mouse = direita) e **Mão ativa** (mouse controla a mão ativa, Tab alterna). O mouse posiciona a
   mão por raycast num plano horizontal cuja altura muda com a roda; não usa pointer lock.
+- Nomes de ossos no three.js perdem o ponto (`upperarm01.L` → `upperarm01L`; GLTFLoader sanitiza).
+- A página publicada bloqueia fetch de `data:`/`blob:`: o glTF é baixado por fetch relativo e montado como
+  .glb em memória (`downloadPatient`); publicar `pagina.html` com `paciente.json` como arquivo de apoio.
 - `window.__sim` expõe o App para testes e depuração; `debugView` troca para câmera livre.
 
 Comandos:

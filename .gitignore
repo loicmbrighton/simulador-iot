@@ -156,3 +156,4 @@ tools/anatomia/.cache/
 # Build
 dist-artifact/
 screenshots/
+.publicar/

@@ -37,6 +37,7 @@ const shot = async (name) => {
 };
 const sim = (fn, arg) => page.evaluate(fn, arg);
 
+await page.waitForFunction(() => window.__sim.world.patient, null, { timeout: 180000 }).catch(() => console.log('paciente não carregou'));
 await shot('01_menu');
 await page.click('.primary');
 await shot('02_inicio_ajuda');
@@ -81,6 +82,22 @@ await sim(() => {
   s.debugView = { pos: new V(0, 1.38, 0.35), target: new V(0, 1.28, -0.15) };
 });
 await shot('06_maos_frente');
+
+// Paciente na maca: lateral e cabeça de perto.
+await sim(() => {
+  const s = window.__sim;
+  s.equip('left', 0);
+  s.equip('right', 0);
+  const V = s.camera.position.constructor;
+  s.debugView = { pos: new V(1.6, 1.5, 0.6), target: new V(0, 1.0, 0.55) };
+});
+await shot('08_maca_lateral');
+await sim(() => {
+  const s = window.__sim;
+  const V = s.camera.position.constructor;
+  s.debugView = { pos: new V(0.55, 1.18, -0.05), target: new V(0, 1.07, 0.02) };
+});
+await shot('09_cabeca_posicao_olfativa');
 
 // Exercício.
 await sim(() => {

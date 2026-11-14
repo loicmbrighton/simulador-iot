@@ -21,11 +21,16 @@ export class Exercise {
     right: new MeshStandardMaterial({ color: 0x35c8ff, emissive: 0x00527a, transparent: true, opacity: 0.85 }),
   };
 
-  constructor(private readonly targets: ExerciseTarget[], private readonly radius = 0.014) {
+  constructor(private targets: ExerciseTarget[], private readonly radius = 0.014) {
     this.marker = new Mesh(new SphereGeometry(0.007, 16, 12), this.mats.left);
     this.ring = new Mesh(new TorusGeometry(radius, 0.0012, 8, 32), this.mats.left);
     this.group.add(this.marker, this.ring);
     this.group.visible = false;
+  }
+
+  setTargets(t: ExerciseTarget[]): void {
+    this.targets = t;
+    if (this.active) this.toggle();
   }
 
   get current(): ExerciseTarget | null {

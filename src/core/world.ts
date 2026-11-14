@@ -1,9 +1,10 @@
 import {
   BackSide, BoxGeometry, CanvasTexture, CapsuleGeometry, CircleGeometry, Color, CylinderGeometry, DirectionalLight,
   Group, HemisphereLight, Mesh, MeshStandardMaterial, PlaneGeometry, SphereGeometry, SpotLight, SRGBColorSpace,
-  TorusGeometry, Vector3, ConeGeometry,
+  TorusGeometry, Vector3, ConeGeometry, Object3D,
 } from 'three';
 import type { ScenarioInfo } from '../config';
+import type { Patient } from './patient';
 import { TRAY_SIZE, TRAY_TOP } from '../tools/tools';
 import { MAT } from './materials';
 
@@ -31,6 +32,10 @@ export class World {
     fronte: new Vector3(0, HEAD_C.y + 0.088, -0.045),
     cricoide: new Vector3(0, 1.05, 0.165),
   };
+  /** Paciente real (carregado depois); enquanto isso o manequim aparece. */
+  patient: Patient | null = null;
+  private mannequin: Group | null = null;
+  private spotTarget: Object3D | null = null;
   private readonly wallMat = new MeshStandardMaterial({ color: 0xc7c3bb, roughness: 0.95, side: BackSide });
   private readonly monitorCanvas = document.createElement('canvas');
   private readonly monitorTex: CanvasTexture;
@@ -50,6 +55,21 @@ export class World {
     this.buildLights();
   }
 
+  /** Troca o manequim pelo paciente real e atualiza os pontos de referência. */
+  setPatient(p: Patient): void {
+    this.patient = p;
+    this.group.add(p.root);
+    if (this.mannequin) this.mannequin.visible = false;
+    const up = (v: Vector3, d: number) => v.clone().add(new Vector3(0, d, 0));
+    this.landmarks.boca.copy(up(p.landmark('boca'), -0.004));
+    this.landmarks.comissuraDireita.copy(p.landmark('comissuraDireita'));
+    this.landmarks.comissuraEsquerda.copy(p.landmark('comissuraEsquerda'));
+    this.landmarks.mento.copy(p.landmark('mento'));
+    this.landmarks.fronte.copy(p.landmark('fronte'));
+    this.landmarks.cricoide.copy(p.landmark('cricoide'));
+    this.spotTarget?.position.copy(this.landmarks.boca);
+  }
+
   applyScenario(s: ScenarioInfo): void {
     this.wallMat.color = new Color(s.paredes);
   }
@@ -57,6 +77,16 @@ export class World {
   // ------------------------------------------------------------------ colisões simples das mãos
   /** Empurra um ponto (esfera de raio r) para fora da cabeça, do pescoço e do tronco. */
   pushOut(p: Vector3, r: number): void {
+    if (this.patient) {
+      const pt = this.patient;
+      const q = p.clone().sub(pt.headCenter);
+      const R = pt.headRadii;
+      const n = Math.hypot(q.x / (R.x + r), q.y / (R.y + r), q.z / (R.z + r));
+      if (n < 1 && n > 1e-6) p.copy(pt.headCenter).add(q.divideScalar(n));
+      const h = pt.coverHeight(p.x, p.z);
+      if (h > -Infinity) p.y = Math.max(p.y, h + r);
+      return;
+    }
     // Cabeça (elipsoide).
     const q = p.clone().sub(HEAD_C);
     const sx = HEAD_R.x + r, sy = HEAD_R.y + r, sz = HEAD_R.z + r;
@@ -104,6 +134,7 @@ export class World {
   private buildPatient(): void {
     const p = new Group();
     p.name = 'paciente';
+    this.mannequin = p;
     // Coxim occipital.
     const pad = m(new CylinderGeometry(0.11, 0.12, 0.03, 24), MAT.lencol, 0, MATTRESS_TOP + 0.012, -0.01);
     p.add(pad);
@@ -186,6 +217,7 @@ export class World {
     const spot = new SpotLight(0xfff4e6, 22, 0, 0.42, 0.65, 2);
     spot.position.set(0.35, 2.35, -0.25);
     spot.target.position.copy(this.landmarks.boca);
+    this.spotTarget = spot.target;
     spot.castShadow = true;
     spot.shadow.mapSize.set(2048, 2048);
     spot.shadow.bias = -0.0002;

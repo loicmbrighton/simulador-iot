@@ -5,6 +5,7 @@ import {
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { DOCTOR, SCENARIOS, SPEED, WORKSPACE, type ControlScheme, type ScenarioId, type Side } from './config';
 import { World } from './core/world';
+import { downloadPatient, Patient } from './core/patient';
 import { Exercise } from './game/exercise';
 import { Hand } from './hands/hand';
 import { digitPressed, keyboardHandIntent, leanIntent } from './input/controls';
@@ -67,21 +68,16 @@ export class App {
     this.scene.add(this.world.group);
     this.hands = { left: new Hand('left', this.scene), right: new Hand('right', this.scene) };
     this.tools = TOOL_DEFS.map((d) => new Tool(d));
-    this.exercise = new Exercise([
-      { nome: 'Centro da boca', pos: this.world.landmarks.boca.clone().add(new Vector3(0, 0.012, 0)), mao: 'left' },
-      { nome: 'Comissura labial direita', pos: this.world.landmarks.comissuraDireita.clone().add(new Vector3(0, 0.012, 0)), mao: 'right' },
-      { nome: 'Fronte', pos: this.world.landmarks.fronte.clone().add(new Vector3(0, 0.012, 0)), mao: 'left' },
-      { nome: 'Mento', pos: this.world.landmarks.mento.clone().add(new Vector3(0, 0.014, 0)), mao: 'right' },
-      { nome: 'Comissura labial esquerda', pos: this.world.landmarks.comissuraEsquerda.clone().add(new Vector3(0, 0.012, 0)), mao: 'left' },
-      { nome: 'Cartilagem cricoide', pos: this.world.landmarks.cricoide.clone().add(new Vector3(0, 0.03, 0)), mao: 'right' },
-    ]);
+    this.exercise = new Exercise(this.exerciseTargets());
     this.scene.add(this.exercise.group);
+
 
     this.ui = new UI(container);
     this.ui.onStart = (c) => this.start(c.scenario, c.scheme);
     this.ui.onResume = () => this.resume();
     this.reset();
     this.ui.showMenu(false);
+    void this.loadPatient();
 
     window.addEventListener('resize', () => this.resize());
     window.addEventListener('keydown', (e) => {
@@ -92,6 +88,35 @@ export class App {
     });
     this.resize();
     this.renderer.setAnimationLoop(() => this.frame());
+  }
+
+  private exerciseTargets() {
+    const L = this.world.landmarks;
+    const up = (v: Vector3, d: number) => v.clone().add(new Vector3(0, d, 0));
+    return [
+      { nome: 'Centro da boca', pos: up(L.boca, 0.012), mao: 'left' as Side },
+      { nome: 'Comissura labial direita', pos: up(L.comissuraDireita, 0.012), mao: 'right' as Side },
+      { nome: 'Fronte', pos: up(L.fronte, 0.012), mao: 'left' as Side },
+      { nome: 'Mento', pos: up(L.mento, 0.014), mao: 'right' as Side },
+      { nome: 'Comissura labial esquerda', pos: up(L.comissuraEsquerda, 0.012), mao: 'left' as Side },
+      { nome: 'Cartilagem cricoide', pos: up(L.cricoide, 0.03), mao: 'right' as Side },
+    ];
+  }
+
+  /** Baixa o paciente real (≈14 MB) em segundo plano; até lá a cena usa o manequim. */
+  private async loadPatient(): Promise<void> {
+    try {
+      const gltf = await downloadPatient('paciente.json', (f) => this.ui.setPatientStatus(`Paciente: carregando ${Math.round(f * 100)}%`));
+      this.ui.setPatientStatus('Paciente: preparando…');
+      const patient = new Patient(gltf, { mattressTop: 0.92, headTopZ: -0.13 });
+      this.world.setPatient(patient);
+      this.exercise.setTargets(this.exerciseTargets());
+      this.ui.setPatientStatus('Paciente pronto.');
+      if (this.state === 'jogo') this.ui.flash('Paciente carregado');
+    } catch (e) {
+      console.error(e);
+      this.ui.setPatientStatus(`Não foi possível carregar o paciente (${(e as Error).message}). O manequim será usado.`);
+    }
   }
 
   // ------------------------------------------------------------------ estados
