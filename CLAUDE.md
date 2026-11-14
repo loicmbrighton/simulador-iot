@@ -44,8 +44,22 @@ texturizada, olhos, sobrancelhas, cílios, cabelo curto, dentes e língua. Não 
   inclui `jaw`, `neck01-03`, `head`, `tongue00-07`) com pesos transferidos aos acessórios.
 - `testar_poses.py`: boca aberta (rotação X positiva do `jaw`), posição olfativa (`neck01/02` flexão,
   `head` extensão) e corte sagital. Resultado em `docs/referencias/paciente_rig_v1.png`.
-- **Achado:** a boca do MakeHuman é um "bolso" fechado, sem faringe/laringe. A via aérea precisa ser construída
-  (Z-Anatomy como referência + mucosa modelada) e conectada ao fundo da cavidade oral.
+- **Achado:** a boca do MakeHuman é um "bolso" fechado, sem faringe/laringe.
+
+Via aérea interna: `gerar_via_aerea.py <paciente.blend> <saida.blend>` (precisa de `scikit-image` no venv).
+- Modela o **volume de ar** como SDF numa grade de 0,7 mm (cavidade oral, faringe, lúmen laríngeo com
+  vestíbulo/pregas vestibulares/ventrículo/glote/subglote, traqueia com anéis, esôfago colapsado) e subtrai
+  tecidos (língua, palato mole/úvula, pilares, coluna laríngea com adito inclinado, epiglote em ômega,
+  prega glossoepiglótica, cuneiformes/corniculados). Superfície por marching cubes → objeto `via_aerea`.
+- Marcos na linha média estão no topo do script (glote em z=1,4765, comissura anterior, processos vocais).
+  O alinhamento direto Z-Anatomy→MakeHuman pelos dentes foi descartado (laringe sairia do pescoço);
+  a via aérea é construída no espaço do MakeHuman com proporções anatômicas.
+- Remove o "bolso" oral do MakeHuman por inundação a partir do fundo da boca (não atravessa os lábios)
+  e apaga o acessório `lingua` (a língua agora faz parte da via aérea).
+- Pesos: palato/faringe alta → `head`; língua → `jaw` (base parcial); laringe/traqueia → `neck01-03`.
+- Cores por região em atributo de vértice `cor` (mucosa, língua, epiglote, aritenoides, palato, pregas vocais).
+- `renderizar_via_aerea.py`: visão laringoscópica, ádito, cortes sagitais, boca aberta, via aérea isolada.
+- Resultado salvo em `assets/fonte/paciente.blend` (paciente completo) e `docs/referencias/via_aerea_v1.png`.
 
 O atlas é dado de terceiros: abrir sempre com `-I` e sem executar os scripts embutidos (já tratado nos scripts).
 
