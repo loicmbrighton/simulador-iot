@@ -1,0 +1,290 @@
+<title>Anatomia do Paciente</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+/* Layout: visualizador em tela cheia com painel de controles flutuante à direita (embaixo no celular). */
+:root {
+  --bg: #e6ebee; --scene: #d9dfe3; --panel: rgba(255, 255, 255, 0.92); --text: #142029; --muted: #5d6c77;
+  --line: rgba(20, 32, 41, 0.12); --accent: #b4483f; --accent-soft: #f6e3e0; --accent-text: #ffffff;
+  --font: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11171b; --scene: #161d22; --panel: rgba(24, 32, 38, 0.92); --text: #e9eff3; --muted: #95a6b2;
+    --line: rgba(233, 239, 243, 0.12); --accent: #e0786d; --accent-soft: #3a2422; --accent-text: #1a0d0b; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11171b; --scene: #161d22; --panel: rgba(24, 32, 38, 0.92); --text: #e9eff3; --muted: #95a6b2;
+  --line: rgba(233, 239, 243, 0.12); --accent: #e0786d; --accent-soft: #3a2422; --accent-text: #1a0d0b; color-scheme: dark;
+}
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); overflow: hidden; }
+#vista { position: fixed; inset: 0; }
+#vista canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.painel {
+  position: fixed; top: calc(16px + env(safe-area-inset-top, 0px)); right: max(16px, env(safe-area-inset-right, 0px));
+  width: 290px; max-height: calc(100% - 32px); overflow-y: auto; background: var(--panel); backdrop-filter: blur(10px);
+  border: 1px solid var(--line); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 14px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.18);
+}
+h1 { margin: 0; font-size: 18px; text-wrap: balance; }
+.sub { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+h2 { margin: 0 0 6px; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.botoes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+button {
+  font: inherit; font-size: 12.5px; font-weight: 600; padding: 8px 10px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--line); background: transparent; color: var(--text); text-align: left;
+}
+button:hover { border-color: var(--accent); }
+button.ativo { background: var(--accent); color: var(--accent-text); border-color: transparent; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.seg { display: flex; gap: 4px; }
+.seg button { flex: 1; text-align: center; }
+label.slider { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; font-size: 13px; align-items: center; }
+label.slider input { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); }
+.valor { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
+.check { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+.dica { font-size: 11.5px; color: var(--muted); margin: 0; line-height: 1.45; }
+#carregando[hidden] { display: none; }
+#carregando {
+  position: fixed; inset: 0; display: grid; place-items: center; font-size: 14px; color: var(--muted); pointer-events: none;
+}
+#legenda {
+  position: fixed; left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; font-size: 12.5px;
+  max-width: min(420px, calc(100% - 32px)); line-height: 1.45;
+}
+#legenda strong { display: block; font-size: 13px; margin-bottom: 2px; }
+@media (max-width: 700px) {
+  .painel { top: auto; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); left: max(16px, env(safe-area-inset-left, 0px)); width: auto; max-height: 46%; }
+  #legenda { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div id="vista"></div>
+<div id="carregando">Carregando o paciente (14 MB)…</div>
+<aside class="painel" aria-label="Controles">
+  <div>
+    <h1>Anatomia do Paciente</h1>
+    <p class="sub">Homem, 40 anos · via aérea v1 · Simulador IOT</p>
+  </div>
+  <div>
+    <h2>Vistas</h2>
+    <div class="botoes" id="vistas">
+      <button data-vista="rosto" id="v-rosto" type="button">Rosto</button>
+      <button data-vista="boca" id="v-boca" type="button">Boca aberta</button>
+      <button data-vista="corte" id="v-corte" type="button">Corte sagital</button>
+      <button data-vista="laringo" id="v-laringo" type="button">Laringoscópica</button>
+      <button data-vista="isolada" id="v-isolada" type="button">Via aérea isolada</button>
+      <button data-vista="olfativa" id="v-olfativa" type="button">Posição olfativa</button>
+    </div>
+  </div>
+  <div>
+    <h2>Pele</h2>
+    <div class="seg" id="pele">
+      <button data-pele="opaca" id="p-opaca" type="button">Opaca</button>
+      <button data-pele="transparente" id="p-transp" type="button">Transparente</button>
+      <button data-pele="oculta" id="p-oculta" type="button">Oculta</button>
+    </div>
+  </div>
+  <label class="check" for="corte"><input type="checkbox" id="corte"> Corte sagital (metade esquerda removida)</label>
+  <label class="check" for="lanterna"><input type="checkbox" id="lanterna"> Lanterna na câmera</label>
+  <label class="slider" for="boca">Abertura da boca <span class="valor" id="boca-v">0°</span>
+    <input type="range" id="boca" min="0" max="32" value="0"></label>
+  <label class="slider" for="ext">Extensão da cabeça <span class="valor" id="ext-v">0°</span>
+    <input type="range" id="ext" min="0" max="35" value="0"></label>
+  <p class="dica">Arraste para girar, roda/pinça para zoom, botão direito (ou dois dedos) para mover. Na vista
+    laringoscópica a câmera fica dentro da orofaringe, como se a língua já estivesse rebatida.</p>
+</aside>
+<div id="legenda"><strong id="leg-t">Rosto</strong><span id="leg-d"></span></div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+// Coordenadas: o .glb vem do Blender com Y para cima; a face do paciente olha para +Z.
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const vista = document.getElementById('vista');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.9;
+renderer.localClippingEnabled = true;
+vista.append(renderer.domElement);
+const scene = new THREE.Scene();
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.55;
+const camera = new THREE.PerspectiveCamera(40, 1, 0.001, 20);
+scene.add(camera);
+const hemi = new THREE.HemisphereLight(0xffffff, 0x6b5a50, 0.5);
+scene.add(hemi);
+const sol = new THREE.DirectionalLight(0xffffff, 1.3);
+sol.position.set(0.6, 2.4, 1.2);
+scene.add(sol);
+const lanterna = new THREE.SpotLight(0xfff2dc, 0, 0.6, 0.55, 0.5, 1.6);
+lanterna.position.set(0, 0, 0);
+lanterna.target.position.set(0, 0, -1);
+camera.add(lanterna, lanterna.target);
+
+let controls = null;
+function novoControle(target) {
+  if (controls) controls.dispose();
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.target.copy(target);
+  controls.minDistance = 0.005;
+  controls.update();
+}
+
+const estado = { pele: 'opaca', corte: false, lanterna: false, boca: 0, ext: 0, luz: 0.5, amb: 1 };
+function bg() { if (!estado.escuro) scene.background = new THREE.Color(css('--scene')); }
+bg();
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', bg);
+new MutationObserver(bg).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+function resize() {
+  const w = vista.clientWidth, h = vista.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+resize();
+
+// ------------------------------------------------------------------ paciente
+const plano = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0.0004); // remove x > 0 (metade esquerda)
+const objetos = {};
+const materiais = [];
+const ossos = {};
+const repouso = {};
+
+const gltf = await new GLTFLoader().loadAsync('paciente.json');
+document.getElementById('carregando').hidden = true;
+scene.add(gltf.scene);
+gltf.scene.traverse((o) => {
+  if (o.isBone) { ossos[o.name] = o; repouso[o.name] = o.quaternion.clone(); }
+  if (o.isMesh) {
+    objetos[o.name] = o;
+    o.frustumCulled = false;
+    const m = o.material;
+    materiais.push(m);
+    if (o.name === 'via_aerea') {
+      m.vertexColors = true;
+      m.roughness = 0.32; m.metalness = 0;
+      m.side = THREE.DoubleSide;
+    }
+    if (['cabelo', 'cilios', 'sobrancelhas'].includes(o.name)) { m.transparent = true; m.alphaTest = 0.3; m.depthWrite = true; }
+  }
+});
+
+const X = new THREE.Vector3(1, 0, 0);
+function girar(nome, graus) {
+  const b = ossos[nome];
+  if (!b) return;
+  b.quaternion.copy(repouso[nome]).multiply(new THREE.Quaternion().setFromAxisAngle(X, THREE.MathUtils.degToRad(graus)));
+}
+// Sinais medidos no Blender: mandíbula abre com X positivo; extensão da cabeça com X negativo e
+// flexão do pescoço baixo com X positivo (posição olfativa).
+function aplicarPose() {
+  girar('jaw', estado.boca);
+  girar('head', -estado.ext * 0.8);
+  girar('neck03', -estado.ext * 0.2);
+  girar('neck02', estado.ext * 0.17);
+  girar('neck01', estado.ext * 0.35);
+}
+
+function aplicarAparencia() {
+  const corpo = objetos.paciente;
+  const pele = estado.pele;
+  for (const n of ['paciente', 'cabelo', 'cilios', 'sobrancelhas', 'olhos']) if (objetos[n]) objetos[n].visible = pele !== 'oculta';
+  if (corpo) {
+    corpo.material.transparent = pele === 'transparente';
+    corpo.material.opacity = pele === 'transparente' ? 0.22 : 1;
+    corpo.material.depthWrite = pele !== 'transparente';
+  }
+  for (const m of materials()) {
+    m.clippingPlanes = estado.corte ? [plano] : [];
+    if (m !== objetos.via_aerea?.material) m.side = estado.corte ? THREE.DoubleSide : THREE.FrontSide;
+    m.needsUpdate = true;
+  }
+  lanterna.intensity = estado.lanterna ? estado.luz : 0;
+  // Vistas internas: pouca luz ambiente (o ambiente não faz sombra dentro da boca); a lanterna ilumina.
+  scene.environmentIntensity = 0.4 * estado.amb;
+  hemi.intensity = 0.5 * estado.amb;
+  sol.intensity = 1.3 * estado.amb;
+  scene.background = new THREE.Color(estado.escuro ? '#050302' : css('--scene'));
+  sync();
+}
+function materials() { return materiais; }
+
+const legendas = {
+  rosto: ['Rosto', 'Pálpebras fechadas (paciente sedado). Gire para ver o perfil e o pescoço.'],
+  boca: ['Boca aberta', 'A mandíbula gira e leva junto os dentes de baixo e a língua.'],
+  corte: ['Corte sagital', 'Cavidade oral, língua, palato mole e úvula, valécula, epiglote, laringe, traqueia (frente) e esôfago (atrás).'],
+  laringo: ['Visão laringoscópica', 'Epiglote em cima; pregas ariepiglóticas formando o ádito; pregas vocais brancas; aritenoides embaixo (Cormack-Lehane I).'],
+  isolada: ['Via aérea isolada', 'Superfície da mucosa da boca à traqueia, sem a pele.'],
+  olfativa: ['Posição olfativa', 'Flexão do pescoço baixo com extensão atlanto-occipital (cabeça ainda em pé; deitado na maca entra depois).'],
+};
+
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+function irPara(nome) {
+  const presets = {
+    rosto: { pos: V(0.16, 1.63, 0.42), alvo: V(0, 1.6, 0.06), pele: 'opaca', corte: false, lanterna: false, boca: 0, ext: 0 },
+    boca: { pos: V(0, 1.575, 0.27), alvo: V(0, 1.555, 0.07), pele: 'opaca', corte: false, lanterna: true, luz: 0.12, amb: 0.45, boca: 26, ext: 0 },
+    corte: { pos: V(0.34, 1.53, 0.09), alvo: V(0, 1.52, 0.08), pele: 'opaca', corte: true, lanterna: false, boca: 0, ext: 0 },
+    laringo: { pos: V(0, 1.54, 0.0565), alvo: V(0, 1.4765, 0.0615), up: V(0, 0, 1), pele: 'opaca', corte: false, lanterna: true, luz: 0.02, amb: 0.08, escuro: true, boca: 0, ext: 0, fov: 62 },
+    isolada: { pos: V(0.24, 1.58, 0.22), alvo: V(0, 1.5, 0.065), pele: 'oculta', corte: false, lanterna: false, boca: 0, ext: 0 },
+    olfativa: { pos: V(0.75, 1.5, 0.12), alvo: V(0, 1.52, 0.06), pele: 'opaca', corte: false, lanterna: false, boca: 10, ext: 28 },
+  };
+  const p = presets[nome];
+  Object.assign(estado, { pele: p.pele, corte: p.corte, lanterna: p.lanterna, boca: p.boca, ext: p.ext, luz: p.luz ?? 0.5, amb: p.amb ?? 1, escuro: !!p.escuro });
+  camera.up.copy(p.up ?? V(0, 1, 0));
+  camera.fov = p.fov ?? 40;
+  camera.updateProjectionMatrix();
+  camera.position.copy(p.pos);
+  camera.lookAt(p.alvo);
+  novoControle(p.alvo);
+  aplicarPose();
+  aplicarAparencia();
+  document.querySelectorAll('[data-vista]').forEach((b) => b.classList.toggle('ativo', b.dataset.vista === nome));
+  document.getElementById('leg-t').textContent = legendas[nome][0];
+  document.getElementById('leg-d').textContent = legendas[nome][1];
+}
+
+// ------------------------------------------------------------------ interface
+const $ = (id) => document.getElementById(id);
+function sync() {
+  document.querySelectorAll('[data-pele]').forEach((b) => b.classList.toggle('ativo', b.dataset.pele === estado.pele));
+  $('corte').checked = estado.corte;
+  $('lanterna').checked = estado.lanterna;
+  $('boca').value = estado.boca; $('boca-v').textContent = `${estado.boca}°`;
+  $('ext').value = estado.ext; $('ext-v').textContent = `${estado.ext}°`;
+}
+document.querySelectorAll('[data-vista]').forEach((b) => (b.onclick = () => irPara(b.dataset.vista)));
+document.querySelectorAll('[data-pele]').forEach((b) => (b.onclick = () => { estado.pele = b.dataset.pele; aplicarAparencia(); }));
+$('corte').onchange = (e) => { estado.corte = e.target.checked; aplicarAparencia(); };
+$('lanterna').onchange = (e) => { estado.lanterna = e.target.checked; aplicarAparencia(); };
+$('boca').oninput = (e) => { estado.boca = +e.target.value; aplicarPose(); sync(); };
+$('ext').oninput = (e) => { estado.ext = +e.target.value; aplicarPose(); sync(); };
+
+irPara('rosto');
+window.__v = { ossos, objetos, camera, estado, irPara, THREE };
+renderer.setAnimationLoop(() => {
+  controls?.update();
+  renderer.render(scene, camera);
+});
+</script>

@@ -60,6 +60,9 @@ Via aérea interna: `gerar_via_aerea.py <paciente.blend> <saida.blend>` (precisa
 - Cores por região em atributo de vértice `cor` (mucosa, língua, epiglote, aritenoides, palato, pregas vocais).
 - `renderizar_via_aerea.py`: visão laringoscópica, ádito, cortes sagitais, boca aberta, via aérea isolada.
 - Resultado salvo em `assets/fonte/paciente.blend` (paciente completo) e `docs/referencias/via_aerea_v1.png`.
+- Visualizador 3D: `visualizador/index.html` + `visualizador/paciente.json` (glTF em JSON com dados embutidos;
+  páginas publicadas não servem `.glb`). Gerar com `exportar_glb.py` e converter o .glb para JSON (buffer em
+  base64). Publicado em https://claude.ai/artifact/DvjkakWW9com4a3CFLRHje
 
 O atlas é dado de terceiros: abrir sempre com `-I` e sem executar os scripts embutidos (já tratado nos scripts).
 
