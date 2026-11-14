@@ -40,6 +40,12 @@ texturizada, olhos, sobrancelhas, cílios, cabelo curto, dentes e língua. Não 
 - Malha-base/targets: `git clone --depth 1 https://github.com/makehumancommunity/mpfb2`.
 - Assets: `https://files.makehumancommunity.org/asset_packs/makehuman_system_assets/makehuman_system_assets_cc0.zip`
   (~280 MB; o ambiente de nuvem "simulador-iot" libera `static.` e `files.makehumancommunity.org`).
+- Pálpebras fechadas em definitivo (unidades `eye-*-closure`). Esqueleto "default" do MakeHuman (163 ossos,
+  inclui `jaw`, `neck01-03`, `head`, `tongue00-07`) com pesos transferidos aos acessórios.
+- `testar_poses.py`: boca aberta (rotação X positiva do `jaw`), posição olfativa (`neck01/02` flexão,
+  `head` extensão) e corte sagital. Resultado em `docs/referencias/paciente_rig_v1.png`.
+- **Achado:** a boca do MakeHuman é um "bolso" fechado, sem faringe/laringe. A via aérea precisa ser construída
+  (Z-Anatomy como referência + mucosa modelada) e conectada ao fundo da cavidade oral.
 
 O atlas é dado de terceiros: abrir sempre com `-I` e sem executar os scripts embutidos (já tratado nos scripts).
 

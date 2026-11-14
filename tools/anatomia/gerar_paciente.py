@@ -10,6 +10,7 @@ dentes e língua. Os acessórios são ajustados ao corpo pelos arquivos .mhclo (
 = combinação de 3 vértices do corpo + deslocamento escalado), lidos como dados.
 """
 import gzip
+import json
 import os
 import sys
 
@@ -88,6 +89,12 @@ for age, aw in ages.items():
         idx, d = read_target(f)
         verts[idx] += d * 0.5 * aw
         applied.append((os.path.basename(f), round(0.5 * aw, 3)))
+# Paciente anestesiado: pálpebras fechadas (unidades de expressão do MakeHuman, aplicadas em definitivo
+# antes de ajustar os cílios, que acompanham a pálpebra).
+for side in ('left', 'right'):
+    idx, d = read_target(os.path.join(DATA, 'targets', 'expression', 'units', 'caucasian', f'eye-{side}-closure.target.gz'))
+    verts[idx] += d
+    applied.append((f'eye-{side}-closure', 1.0))
 print('targets aplicados:', applied)
 
 # Só os vértices usados pelo corpo; MakeHuman é Y-up em decímetros → Blender Z-up em metros.
@@ -152,7 +159,7 @@ def fit_mhclo(path):
                 in_verts = False
     refs, weights, offsets = np.array(refs), np.array(weights), np.array(offsets)
     pos = (verts[refs] * weights[:, :, None]).sum(axis=1) + offsets * scale
-    return pos
+    return pos, refs, weights
 
 
 def material(name, tex_path, kind):
@@ -185,11 +192,12 @@ def material(name, tex_path, kind):
 
 obj.data.materials.append(material('pele', os.path.join(ASSETS, SKIN), 'pele'))
 
+proxies = []
 for name, (folder, tex, kind) in PROXIES.items():
     base = os.path.join(ASSETS, folder)
     clo = next(f for f in os.listdir(base) if f.endswith('.mhclo'))
     objf = next(f for f in os.listdir(base) if f.endswith('.obj'))
-    pv = fit_mhclo(os.path.join(base, clo))
+    pv, prefs, pweights = fit_mhclo(os.path.join(base, clo))
     _, puv, pfaces, pfuv = read_obj(os.path.join(base, objf), only_group=None)
     pm = bpy.data.meshes.new(name)
     pm.from_pydata(to_blender(pv).tolist(), [], pfaces)
@@ -204,6 +212,68 @@ for name, (folder, tex, kind) in PROXIES.items():
     pm.materials.append(material(name, os.path.join(ASSETS, tex), kind))
     po = bpy.data.objects.new(name, pm)
     bpy.context.scene.collection.objects.link(po)
+    proxies.append((po, prefs, pweights))
     print(f'{name}: {len(pm.vertices)} vértices')
+
+# ------------------------------------------------------------------ esqueleto (rig "default" do MakeHuman, 163 ossos)
+rig_def = json.load(open(os.path.join(DATA, 'rigs', 'standard', 'rig.default.json'), encoding='utf-8'))
+rig_w = json.load(open(os.path.join(DATA, 'rigs', 'standard', 'weights.default.json'), encoding='utf-8'))['weights']
+groups_meta = json.load(open(os.path.join(DATA, 'mesh_metadata', 'basemesh_vertex_groups.json'), encoding='utf-8'))
+ranges = groups_meta  # nome do grupo → lista de intervalos [início, fim] de vértices
+
+
+def joint_pos(spec):
+    if spec['strategy'] == 'CUBE':
+        idx = [i for a, b in ranges[spec['cube_name']] for i in range(a, b + 1)]
+    elif spec['strategy'] == 'VERTEX':
+        idx = [spec['vertex_index']]
+    else:
+        idx = spec['vertex_indices']
+    return to_blender(verts[idx].mean(axis=0, keepdims=True))[0]
+
+
+arm_data = bpy.data.armatures.new('esqueleto')
+arm = bpy.data.objects.new('esqueleto', arm_data)
+bpy.context.scene.collection.objects.link(arm)
+bpy.context.view_layer.objects.active = arm
+bpy.ops.object.mode_set(mode='EDIT')
+for name, b in rig_def.items():
+    eb = arm_data.edit_bones.new(name)
+    eb.head = joint_pos(b['head'])
+    eb.tail = joint_pos(b['tail'])
+    eb.roll = b.get('roll', 0.0)
+for name, b in rig_def.items():
+    if b.get('parent'):
+        eb = arm_data.edit_bones[name]
+        eb.parent = arm_data.edit_bones[b['parent']]
+        eb.use_connect = b.get('use_connect', False)
+bpy.ops.object.mode_set(mode='OBJECT')
+
+# Pesos do corpo (índices originais → índices da malha do corpo).
+body_w = {}
+for bone, pairs in rig_w.items():
+    vg = obj.vertex_groups.new(name=bone)
+    for vi, w in pairs:
+        body_w.setdefault(vi, []).append((bone, w))
+        if vi in remap:
+            vg.add([remap[vi]], w, 'REPLACE')
+# Pesos dos acessórios: média ponderada dos pesos dos 3 vértices de referência.
+for po, prefs, pweights in proxies:
+    acc = {}
+    for pi, (rr, ww) in enumerate(zip(prefs, pweights)):
+        for vi, wv in zip(rr, ww):
+            for bone, bw in body_w.get(int(vi), []):
+                acc.setdefault(bone, {}).setdefault(pi, 0.0)
+                acc[bone][pi] += bw * wv
+    for bone, d in acc.items():
+        vg = po.vertex_groups.new(name=bone)
+        for pi, w in d.items():
+            if w > 1e-4:
+                vg.add([pi], w, 'REPLACE')
+for o in [obj] + [p[0] for p in proxies]:
+    o.parent = arm
+    mod = o.modifiers.new('esqueleto', 'ARMATURE')
+    mod.object = arm
+print(f'esqueleto: {len(arm_data.bones)} ossos')
 
 bpy.ops.wm.save_as_mainfile(filepath=OUT)
