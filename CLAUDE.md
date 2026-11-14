@@ -19,8 +19,14 @@ Idioma do projeto, da interface e da documentação: **português (Brasil)**.
 - **Uso:** pessoal e apresentações acadêmicas, sem fins comerciais. Manter `CREDITOS.md`
   atualizado sempre que entrar um asset de terceiros.
 
-## Decisões pendentes
-- Plataforma prioritária (PC, celular, VR) e protocolo clínico de referência.
+- **Plataforma prioritária: PC** (navegador, teclado + mouse). Celular vem depois como versão
+  adaptada (toque, gráficos reduzidos); VR fica como possibilidade futura (WebXR).
+- **Três cenários selecionáveis no menu:** Sequência Rápida, Eletiva e Modo Easy. Regras, doses,
+  diretrizes e pesos de erro em **`docs/CENARIOS.md`** (fonte da verdade clínica).
+- **Paciente sempre com anatomia normal** (sem preditores de via aérea difícil). Não criar
+  variações anatômicas (obeso, pescoço curto, trauma cervical etc.) sem pedido explícito.
+- **Diretrizes:** Walls (SRI na emergência), DAS 2015 (eletiva e via aérea falha), PreVent 2019
+  (BVM durante a SRI). Pontos controversos ficam configuráveis.
 
 ## Anatomia (Z-Anatomy)
 Pipeline em `tools/anatomia/`:
@@ -39,6 +45,31 @@ Avaliação do recorte (`docs/referencias/z_anatomy_recorte_inicial.png`):
   seios piriformes, mucosa contínua oral, faríngea e laríngea, lábios, bochechas e pele.
 - Estratégia: o Z-Anatomy é o **esqueleto de referência** (posições e proporções); a mucosa e os
   tecidos moles deformáveis são modelados por script por cima dele.
+
+## Código (Fase 0: protótipo de controle)
+```
+src/
+├── main.ts / app.ts      # entrada, estados (menu/jogo/pausa), loop, câmera, lógica de controle
+├── config.ts             # sistema de coordenadas, cenários, alcance, postura do médico, velocidades
+├── core/world.ts         # sala, maca, paciente provisório (manequim), bandeja, monitor, luzes, colisões
+├── core/materials.ts     # materiais PBR compartilhados
+├── hands/hand.ts, ik.ts  # mãos procedurais (dedos que fecham na empunhadura) + IK de dois ossos
+├── tools/models.ts       # ferramentas procedurais com medidas reais
+├── tools/tools.ts        # definições, teclas, pose "pronta", posição na bandeja, empunhadura
+├── input/                # entrada bruta (input.ts) e mapeamentos puros testáveis (controls.ts)
+├── game/exercise.ts      # treino de precisão (alvos na face/pescoço)
+└── ui/ui.ts              # menu (cenário + esquema de controle), HUD, ajuda
+```
+- Coordenadas em metros: +X = esquerda do médico/paciente, +Y = cima, +Z = pés do paciente.
+- Dois esquemas de controle selecionáveis (menu ou tecla V): **Duas mãos** (WASD = esquerda,
+  mouse = direita) e **Mão ativa** (mouse controla a mão ativa, Tab alterna). O mouse posiciona a
+  mão por raycast num plano horizontal cuja altura muda com a roda; não usa pointer lock.
+- `window.__sim` expõe o App para testes e depuração; `debugView` troca para câmera livre.
+
+Comandos:
+- `npm run dev`: servidor local. `npm test`: testes (Vitest). `npm run typecheck`.
+- `npx vite build && node tools/screenshots.mjs <pasta>`: screenshots de inspeção via Playwright.
+- `npm run build:artifact`: gera `dist-artifact/index.html` (arquivo único) para publicar como página de teste.
 
 ## Fluxo de trabalho
 - Sessões do Claude são efêmeras: commitar e dar push com frequência.

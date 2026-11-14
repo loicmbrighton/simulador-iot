@@ -152,3 +152,7 @@ vite.config.ts.timestamp-*
 tools/anatomia/.cache/
 # Backups automáticos do Blender
 *.blend1
+
+# Build
+dist-artifact/
+screenshots/
