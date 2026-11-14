@@ -34,6 +34,11 @@ Pipeline em `tools/anatomia/`:
 2. `.cache/venv/bin/python -I extrair_via_aerea.py .cache/Z-Anatomy/Startup.blend ../../assets/fonte/via_aerea.blend`
 3. `.cache/venv/bin/python -I renderizar_vistas.py ../../assets/fonte/via_aerea.blend <pasta>`: 6 vistas + `painel.png`.
 
+Corpo do paciente: `gerar_paciente.py <mpfb2/src/mpfb/data> <saida.blend>` lê a malha-base e os targets do
+MakeHuman (CC0) **como dados** e aplica a mistura de macros (homem, 40 anos, fenótipo misto). Não rodar o
+código do MPFB (é código de terceiros). Pele, olhos, sobrancelhas e cabelo vêm do pacote de assets do
+MakeHuman (pendente: o host está bloqueado nesta rede).
+
 O atlas é dado de terceiros: abrir sempre com `-I` e sem executar os scripts embutidos (já tratado nos scripts).
 
 Avaliação do recorte (`docs/referencias/z_anatomy_recorte_inicial.png`):
