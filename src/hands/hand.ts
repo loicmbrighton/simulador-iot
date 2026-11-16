@@ -12,6 +12,8 @@ import { solveTwoBone } from './ik';
  */
 const ANCHOR_IN_WRIST = new Vector3(0, -0.033, 0.083);
 const UP = new Vector3(0, 1, 0);
+/** Velocidade de fechamento de cada dedo (indicador, médio, anelar, mínimo, polegar), em 1/s. */
+const FINGER_RATE = [13, 10.5, 8.5, 7, 12];
 
 interface Finger {
   joints: Group[];
@@ -153,8 +155,9 @@ export class Hand {
   update(dt: number, shoulder: Vector3, pole: Vector3, origin = shoulder): void {
     // Dedos fecham quando há ferramenta.
     const want = this.curlOverride ?? (this.tool ? 1 : 0);
-    const k = 1 - Math.exp(-10 * dt);
     this.fingers.forEach((f, n) => {
+      // Cada dedo fecha no seu ritmo (o indicador e o polegar chegam antes): evita o gesto em bloco.
+      const k = 1 - Math.exp(-FINGER_RATE[n] * dt);
       this.curls[n] += ((this.fingerCurl?.[n] ?? want) - this.curls[n]) * k;
       f.joints.forEach((j, i) => {
         j.rotation.x = f.open[i] + (f.closed[i] - f.open[i]) * this.curls[n];

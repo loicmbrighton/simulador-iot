@@ -45,6 +45,7 @@ export class UI {
   private readonly checklist = el('div', 'checklist panel');
   private readonly flashBox = el('div', 'redflash');
   private readonly caption = el('div', 'caption');
+  private readonly fade = el('div', 'cutfade');
   private readonly wheel = el('div', 'wheel');
   private toastTimer = 0;
   private checklistKey = '';
@@ -61,7 +62,7 @@ export class UI {
     this.toast.setAttribute('role', 'status');
     this.caption.setAttribute('role', 'status');
     this.hud.append(
-      this.flashBox, this.topLeft, this.vitals, this.topRight, this.checklist, this.handBoxes.left, this.handBoxes.right, this.wheel,
+      this.fade, this.flashBox, this.topLeft, this.vitals, this.topRight, this.checklist, this.handBoxes.left, this.handBoxes.right, this.wheel,
       this.caption, this.help, this.toast, this.hint,
     );
     root.append(this.hud, this.menu);
@@ -157,6 +158,11 @@ export class UI {
     void this.flashBox.offsetWidth; // reinicia a animação
     this.flashBox.classList.add('on');
     this.flash(msg, true);
+  }
+
+  /** Corte de câmera: a imagem escurece por um instante e reaparece (suaviza a troca de ponto de vista). */
+  blink(): void {
+    this.fade.animate([{ opacity: 1 }, { opacity: 1, offset: 0.3 }, { opacity: 0 }], { duration: 480, easing: 'ease-out' });
   }
 
   /** Legenda no rodapé (cortes de câmera). null esconde. */

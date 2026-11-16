@@ -68,6 +68,11 @@ export const VIEWMODEL = {
   activeLift: new Vector3(0, 0.025, 0.03),
   /** Suavização do retorno à pose de repouso (maior = mais rápido). */
   follow: 16,
+  /** Balanço lento das mãos em repouso (respiração): amplitude em metros e em radianos. */
+  sway: 0.003,
+  swayRot: 0.018,
+  /** Quanto o médico se aproxima do paciente enquanto uma mão age nele (metros). */
+  focus: 0.06,
 };
 
 export const LOOK = {
@@ -97,11 +102,11 @@ export const VITALS = {
 /** Câmeras de corte (posições no mundo). */
 export const SHOTS = {
   /** Vista lateral da cabeça e do pescoço, para mostrar a posição olfativa. */
-  lateral: { pos: new Vector3(0.98, 1.17, -0.06), target: new Vector3(0, 1.06, -0.01), fov: 40 },
+  lateral: { pos: new Vector3(0.98, 1.17, 0.06), target: new Vector3(0, 1.07, 0.1), fov: 35 },
   /**
    * Visão pela boca (laringoscopia): a câmera fica sobre a linha boca → laringe. `recuo` = 0 na laringe,
    * 1 nos lábios; `direita`/`posterior` afastam a câmera da lâmina (metros).
    */
-  interna: { recuo: 0.45, direita: 0.004, posterior: 0.002, fov: 46 },
+  interna: { recuo: 0.6, direita: 0.004, posterior: 0.002, fov: 42 },
   medico: { fov: 58 },
 };

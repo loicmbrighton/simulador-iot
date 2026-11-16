@@ -154,6 +154,9 @@ h2 { margin: 20px 0 10px; font-size: 14px; color: var(--muted); font-weight: 600
 .redflash.on { animation: redflash 0.9s ease-out; }
 @keyframes redflash { 0% { opacity: 0; } 12% { opacity: 1; } 30% { opacity: 0.25; } 48% { opacity: 0.9; } 100% { opacity: 0; } }
 
+/* Corte de câmera */
+.cutfade { position: absolute; inset: 0; background: #05080a; opacity: 0; }
+
 /* Legenda dos cortes de câmera */
 .caption {
   position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%); max-width: min(680px, calc(100vw - 28px));

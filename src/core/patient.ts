@@ -179,6 +179,7 @@ export class Patient {
     if (!body) throw new Error('malha do corpo não encontrada');
     this.body = body;
     this.air = (this.meshes['via_aerea'] as SkinnedMesh | undefined) ?? null;
+    this.shadeEsophagus();
     this.findLandmarkVertices();
     this.anchorTrachea();
     this.buildTongueMorph();
@@ -232,6 +233,20 @@ export class Patient {
     b.quaternion.copy(this.rest[name]).multiply(new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), (deg * Math.PI) / 180));
   }
 
+  private nucaVertex = -1;
+
+  /**
+   * Ponto do occipício que toca o colchão na posição neutra, acompanhado na pose atual (mundo). Ao contrário
+   * de `occiput`, é sempre o mesmo ponto da cabeça: serve para uma mão apoiá-la sem escorregar.
+   */
+  nuca(out = new Vector3()): Vector3 {
+    if (this.nucaVertex < 0) return this.occiput(out);
+    this.root.updateMatrixWorld(true);
+    this.body.skeleton.update();
+    this.body.getVertexPosition(this.nucaVertex, out);
+    return out.applyMatrix4(this.body.matrixWorld);
+  }
+
   /** Ponto mais baixo da cabeça (occipício) na pose atual, no mundo. */
   occiput(out = new Vector3()): Vector3 {
     const v = new Vector3();
@@ -264,6 +279,13 @@ export class Patient {
       set((lo + hi) / 2);
     }
     this.measureHead(this.headShapes.neutral);
+    // Guarda o vértice do occipício que toca o colchão na posição neutra.
+    const v = new Vector3();
+    let minY = Infinity;
+    for (const i of this.headVerts) {
+      this.body.getVertexPosition(i, v).applyMatrix4(this.body.matrixWorld);
+      if (Math.abs(v.x) < 0.01 && v.y < minY) [minY, this.nucaVertex] = [v.y, i];
+    }
   }
 
   private measureHead(out: { c: Vector3; r: Vector3 }): void {
@@ -279,6 +301,29 @@ export class Patient {
     }
     out.c.copy(min).add(max).multiplyScalar(0.5);
     out.r.copy(max).sub(min).multiplyScalar(0.47);
+  }
+
+  /**
+   * Escurece a mucosa ao descer pelo funil atrás das aritenoides (entrada do esôfago), como a malha já faz
+   * com a traqueia. Sem isso a entrada do esôfago, colapsada, não se lê como uma abertura na laringoscopia.
+   */
+  private shadeEsophagus(): void {
+    const air = this.air;
+    const col = air?.geometry.getAttribute('color') as BufferAttribute | undefined;
+    if (!air || !col) return;
+    const pos = air.geometry.getAttribute('position') as BufferAttribute;
+    const smooth = (a: number, b: number, x: number) => {
+      const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+      return t * t * (3 - 2 * t);
+    };
+    for (let i = 0; i < pos.count; i++) {
+      const y = pos.getY(i), z = pos.getZ(i);
+      // Atrás da face posterior das aritenoides (z < 0,047), da altura delas (y ≈ 1,488) para baixo.
+      const k = 0.88 * (1 - smooth(1.466, 1.486, y)) * (1 - smooth(0.0465, 0.0495, z)) * smooth(1.42, 1.435, y);
+      if (k <= 0) continue;
+      col.setXYZ(i, col.getX(i) * (1 - k) + 0.1 * k, col.getY(i) * (1 - k) + 0.02 * k, col.getZ(i) * (1 - k) + 0.02 * k);
+    }
+    col.needsUpdate = true;
   }
 
   /**
@@ -314,24 +359,98 @@ export class Patient {
     wgt.needsUpdate = true;
   }
 
-  /** Prepara o morph da laringoscopia: um único alvo, vazio no início, preenchido por `deformTissue`. */
+  /** Peso por vértice da via aérea: língua e epiglote (cedem para anterior, contra a lâmina). */
+  private tissue: Float32Array = new Float32Array(0);
+  /** Peso por vértice: palato mole, úvula e pilares (cedem para posterior). */
+  private palate: Float32Array = new Float32Array(0);
+
+  /**
+   * Prepara o morph da laringoscopia (um alvo, vazio no início, preenchido por `deformTissue`) e define, por
+   * vértice, o que é tecido mole (no espaço do modelo: paciente em pé, y para cima, z para a frente):
+   * - anterior: a língua (pela cor de região) e toda a parede anterior da faringe, da base da língua até a
+   *   base da epiglote (valécula e epiglote incluídas). Logo acima da glote o peso cai a zero: é a
+   *   "dobradiça" da epiglote, e a laringe em si não se deforma;
+   * - palato: palato mole, úvula e pilares (pela cor).
+   * Os pesos são suavizados pela malha para que a mucosa estique aos poucos junto ao tecido fixo.
+   */
   private buildTongueMorph(): void {
     const air = this.air;
     if (!air) return;
-    const count = air.geometry.getAttribute('position').count;
-    air.geometry.morphAttributes.position = [new Float32BufferAttribute(new Float32Array(count * 3), 3)];
-    air.geometry.morphTargetsRelative = true;
+    const geo = air.geometry;
+    const pos = geo.getAttribute('position') as BufferAttribute;
+    const col = geo.getAttribute('color') as BufferAttribute | undefined;
+    const n = pos.count;
+    geo.morphAttributes.position = [new Float32BufferAttribute(new Float32Array(n * 3), 3)];
+    geo.morphTargetsRelative = true;
     air.updateMorphTargets();
     (air.material as MeshStandardMaterial).needsUpdate = true;
+    this.tissue = new Float32Array(n);
+    this.palate = new Float32Array(n);
+    if (!col || !geo.index) return;
+
+    const smooth = (a: number, b: number, x: number) => {
+      const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+      return t * t * (3 - 2 * t);
+    };
+    const corPerto = (i: number, r: number, g: number, b: number, raio: number) =>
+      Math.min(1, Math.max(0, 1 - Math.hypot(col.getX(i) - r, col.getY(i) - g, col.getZ(i) - b) / raio));
+    for (let i = 0; i < n; i++) {
+      const y = pos.getY(i), z = pos.getZ(i);
+      // Língua pela cor (abaixo de y = 1,50 a mesma cor é das aritenoides).
+      const lingua = corPerto(i, 0.74, 0.38, 0.36, 0.09) * smooth(1.5, 1.512, y); // raio curto: a cor do palato é vizinha
+      // Parede anterior da faringe: à frente do meio do lúmen (que recua para trás ao subir até a base da língua).
+      const meio = 0.061 + (0.0505 - 0.061) * smooth(1.515, 1.535, y);
+      const faringe = smooth(meio - 0.003, meio + 0.003, z) * smooth(1.48, 1.492, y) * (1 - smooth(1.535, 1.548, y));
+      this.tissue[i] = Math.max(lingua, faringe);
+      // Palato mole e úvula: só acima da base da língua (mais abaixo, misturas de outras cores se parecem com esta).
+      this.palate[i] = corPerto(i, 0.72, 0.3, 0.3, 0.05) * smooth(1.538, 1.548, y);
+    }
+
+    // Suavização pela malha (média com os vizinhos, algumas passadas).
+    const idx = geo.index.array;
+    const deg = new Uint32Array(n + 1);
+    for (let i = 0; i < idx.length; i++) deg[idx[i] + 1] += 2;
+    for (let i = 0; i < n; i++) deg[i + 1] += deg[i];
+    const adj = new Uint32Array(deg[n]);
+    const fill = new Uint32Array(n);
+    for (let t = 0; t < idx.length; t += 3) {
+      for (let k = 0; k < 3; k++) {
+        const a = idx[t + k];
+        adj[deg[a] + fill[a]++] = idx[t + ((k + 1) % 3)];
+        adj[deg[a] + fill[a]++] = idx[t + ((k + 2) % 3)];
+      }
+    }
+    const blur = (w: Float32Array, passes: number): Float32Array => {
+      let cur: Float32Array = w;
+      for (let it = 0; it < passes; it++) {
+        const next = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+          let sum = 0;
+          for (let e = deg[i]; e < deg[i + 1]; e++) sum += cur[adj[e]];
+          const k = deg[i + 1] - deg[i];
+          next[i] = k > 0 ? 0.5 * cur[i] + (0.5 * sum) / k : cur[i];
+        }
+        cur = next;
+      }
+      return cur;
+    };
+    // Depois de suavizar, o miolo de cada região volta a valer 1 (a transição fica só na borda).
+    this.tissue = blur(this.tissue, 24).map((w) => smooth(0.12, 0.6, w));
+    this.palate = blur(this.palate, 8).map((w) => smooth(0.12, 0.6, w));
+    // Um vértice é de um tecido só: onde a língua domina, o palato não age (e vice-versa).
+    for (let i = 0; i < n; i++) {
+      if (this.tissue[i] >= this.palate[i]) this.palate[i] = 0;
+      else this.tissue[i] = 0;
+    }
   }
 
   /**
-   * Deforma a mucosa da via aérea (morph). `fn` recebe a posição atual de cada vértice no mundo e devolve o
-   * deslocamento desejado (mundo), ou null para não mexer. Deve ser um campo contínuo no espaço (vértices
-   * vizinhos com deslocamentos parecidos), senão a malha estica em "cortinas". O deslocamento é convertido
-   * para a pose de repouso (inversa da parte linear do skinning) e ligado/desligado por `pose.tongue`.
+   * Deforma os tecidos moles da via aérea (morph). `fn` recebe a posição atual de cada vértice no mundo e o
+   * tipo de tecido ('anterior' = língua e epiglote; 'palato' = palato mole, úvula e pilares) e devolve o
+   * deslocamento desejado (mundo), ou null para não mexer. O deslocamento é ponderado pelo peso do tecido,
+   * convertido para a pose de repouso (inversa da parte linear do skinning) e ligado/desligado por `pose.tongue`.
    */
-  deformTissue(fn: (P: Vector3) => Vector3 | null): void {
+  deformTissue(fn: (P: Vector3, tipo: 'anterior' | 'palato') => Vector3 | null): void {
     const air = this.air;
     const morph = air?.geometry.morphAttributes.position?.[0] as BufferAttribute | undefined;
     if (!air || !morph) return;
@@ -346,10 +465,14 @@ export class Patient {
     const out = morph.array as Float32Array;
     out.fill(0);
     for (let i = 0; i < pos.count; i++) {
+      const anterior = this.tissue[i] > 0;
+      const w = anterior ? this.tissue[i] : this.palate[i];
+      if (w <= 0) continue;
       p.fromBufferAttribute(pos, i);
       skin(i, P.copy(p));
-      const d = fn(P);
+      const d = fn(P, anterior ? 'anterior' : 'palato');
       if (!d) continue;
+      d.multiplyScalar(w);
       for (let k = 0; k < 3; k++) {
         q.copy(p).setComponent(k, p.getComponent(k) + eps);
         col[k].copy(skin(i, q)).sub(P).divideScalar(eps);

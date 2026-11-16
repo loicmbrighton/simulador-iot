@@ -6,13 +6,14 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { DOCTOR, LOOK, SCENARIOS, SHOTS, VIEWMODEL, VITALS, type ScenarioId, type Side } from './config';
 import { World } from './core/world';
 import { downloadPatient, Patient } from './core/patient';
-import { Sequencia, type Fase } from './game/anim';
+import { hermite, minJerk, Sequencia, type Fase } from './game/anim';
 import { avaliar, estadoInicial, passoAtual, PASSOS, type Acao, type EasyState } from './game/easy';
 import { Highlighter } from './game/highlight';
 import { pick, type PickTarget } from './game/picking';
 import { Hand } from './hands/hand';
 import { leanIntent, lookIntent } from './input/controls';
 import { Input } from './input/input';
+import { COXIM } from './tools/models';
 import { gripQuat, readyHandQuat, Tool, TOOL_DEFS, TRAY_SIZE, TRAY_TOP, type ToolId } from './tools/tools';
 import { UI } from './ui/ui';
 
@@ -28,10 +29,12 @@ const Q_LIVRE = new Quaternion().setFromEuler(new Euler(0.35, 0, 0));
 const MERGULHO = new Vector3(0, -0.16, -0.06);
 /** Mão que toca o paciente: dedos apontando para baixo e para frente. */
 const Q_TOQUE = new Quaternion().setFromEuler(new Euler(0.95, 0, 0.25));
-/** Mão esquerda na lateral da cabeça (lado esquerdo do paciente): palma contra a cabeça, dedos para o occipício. */
-const Q_APOIO = new Quaternion().setFromRotationMatrix(
-  new Matrix4().makeBasis(new Vector3(0, -0.85, -0.53).normalize(), new Vector3(1, 0, 0), new Vector3(0, -0.53, 0.85).normalize()),
-);
+/** Mão sob o occipício: palma para cima, dedos apontando para os pés do paciente. */
+const Q_NUCA = new Quaternion().setFromEuler(new Euler(-0.18, 0, Math.PI));
+/** Mão espalmada sobre a fronte: palma para baixo, dedos para os pés. */
+const Q_TESTA = new Quaternion().setFromEuler(new Euler(0.12, 0, 0));
+/** Distância do ponto de empunhadura até a superfície da palma (ver `hands/hand.ts`). */
+const PALMA = 0.016;
 /** Abertura da mandíbula (graus): boca aberta em tesoura e com a lâmina tracionando. */
 const JAW_ABERTA = 27;
 const JAW_LAMINA = 32;
@@ -41,29 +44,29 @@ const EXT_LAMINA = 1.2;
  * Luzes da visão pela boca. A lâmpada da lâmina fica quase apagada (está a milímetros do aço e estouraria a
  * imagem); quem ilumina é uma luz no lugar dela, um pouco afastada.
  */
-const INTERNA = { luzCamera: 0.07, luzLamina: 0.00005, ambiente: 0.4 };
+const INTERNA = { luzCamera: 0.075, luzLamina: 0.00005, ambiente: 0.3 };
 /** Geometria da laringoscopia (metros). Ver `App.prepareSight`. */
 const VISAO = {
   /** A linha de visão passa esta distância abaixo da borda dos incisivos superiores. */
   sobIncisivos: 0.004,
   /** 0 = mira na glote, 1 = mira na parede posterior da hipofaringe (entrada do esôfago). */
-  miraEsofago: 0.3,
+  miraEsofago: 0.5,
   /** Ponta da lâmina (valécula): distância até a mira ao longo da linha de visão, afastamento anterior e para a esquerda. */
   pontaAteMira: 0.03,
   pontaAnterior: 0.0115,
   laminaEsquerda: 0.004,
   /** Quanto a corda da lâmina se inclina para anterior em direção à boca (tangente do ângulo). */
   inclinacaoLamina: 0.21,
-  /** O canal vai até esta distância além da lâmina e termina `folgaLaringe` antes da mira. */
+  /** O tecido comprimido fica esta distância além da lâmina. */
   folgaLamina: 0.002,
-  folgaLaringe: 0.012,
   /** Perto da boca a lâmina se afasta muito da linha de visão: o canal não a acompanha além deste limite. */
   tetoMax: 0.02,
   /** Semilargura mínima do canal (a espátula tem 21 mm de largura). */
   canalLargura: 0.014,
+  /** Faixa de transição nas laterais do canal (paredes formadas pela própria língua). */
+  canalBorda: 0.012,
   /** Espaço livre mantido atrás (posterior) da linha de visão: o palato mole e a úvula cedem até aqui. */
-  folgaPalato: 0.011,
-  luzAtePonta: 0.045,
+  folgaPalato: 0.014,
 };
 /** Instrumentos que a mão direita pode pegar pela roda, na visão da laringoscopia. */
 const RODA: ToolId[] = ['tubo', 'aspirador', 'seringa', 'ambu'];
@@ -72,6 +75,16 @@ type State = 'menu' | 'jogo' | 'pausa';
 /** Câmera: visão do médico, corte lateral (posição olfativa) ou visão interna (laringoscopia). */
 type Mode = 'medico' | 'lateral' | 'interna';
 interface Pose { pos: Vector3; quat: Quaternion }
+/** Ponto de passagem de uma trajetória da mão (ver `App.caminho`). */
+interface Ponto extends Omit<Fase, 'dur' | 'linear'> {
+  pose: () => Pose;
+  /** Tempo para chegar a este ponto a partir do anterior (s). */
+  dur: number;
+  /** A mão passa por aqui sem parar (a velocidade é contínua até o ponto seguinte). */
+  passa?: boolean;
+  /** Altura do arco do percurso (m). Padrão: proporcional à distância. Use 0 em aproximações de contato. */
+  arco?: number;
+}
 
 /** O que pode estar sob o cursor. */
 export type TargetId = { tipo: 'ferramenta'; tool: Tool } | { tipo: 'bandeja' } | { tipo: 'cabeca' } | { tipo: 'boca' };
@@ -129,6 +142,11 @@ export class App {
   private readonly acting: Record<Side, Sequencia | null> = { left: null, right: null };
   /** Mão presa a uma pose do mundo, recalculada a cada quadro (ex.: segurando o laringoscópio na boca). */
   private readonly pin: Record<Side, (() => Pose) | null> = { left: null, right: null };
+  /** Velocidade atual de cada mão (m/s): dá continuidade ao começar um movimento novo. */
+  private readonly handVel: Record<Side, Vector3> = { left: new Vector3(), right: new Vector3() };
+  /** A mão está agindo no paciente (o médico se aproxima enquanto isso). */
+  private readonly inWorld: Record<Side, boolean> = { left: false, right: false };
+  private focus = 0;
   /** Corte de câmera em andamento: bloqueia os comandos até terminar. */
   private cut: Sequencia | null = null;
   /**
@@ -137,7 +155,7 @@ export class App {
    */
   private sight: { boca: Vector3; mira: Vector3; dir: Vector3; anterior: Vector3; ponta: Vector3; corda: Vector3; comprimento: number } | null = null;
   /** Luz da visão pela boca (faz o papel da lâmpada da lâmina, que fica a milímetros do aço). */
-  private readonly innerLight = new PointLight(0xfff1d8, 0, 0.4, 1.2);
+  private readonly innerLight = new PointLight(0xfff1d8, 0, 0.5, 1);
 
   constructor(private readonly container: HTMLElement) {
     this.renderer = new WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -249,6 +267,7 @@ export class App {
     this.sight = null;
     this.mode = 'medico';
     this.cut = null;
+    this.focus = 0;
     this.lean.set(0, 0, 0);
     this.yaw = 0;
     this.pitch = 0;
@@ -264,6 +283,8 @@ export class App {
       h.fingerCurl = null;
       h.setVisible(true);
       this.acting[side] = null;
+      this.inWorld[side] = false;
+      this.handVel[side].set(0, 0, 0);
       this.pin[side] = null;
       h.setLayer(LAYER_FPS);
     }
@@ -298,6 +319,11 @@ export class App {
     if (side === this.active) pos.add(VIEWMODEL.activeLift);
     if (h.tool?.def.repouso) pos.add(h.tool.def.repouso);
     const quat = h.tool ? readyHandQuat(h.tool.def, side) : Q_LIVRE.clone();
+    // Balanço lento, fora de fase entre as mãos (respiração): em repouso elas nunca ficam paradas de todo.
+    const t = this.clock.elapsedTime, f = side === 'left' ? 0 : 1.7;
+    pos.x += Math.sin(t * 0.83 + f) * VIEWMODEL.sway * 0.6;
+    pos.y += Math.sin(t * 1.27 + f * 2) * VIEWMODEL.sway;
+    quat.multiply(new Quaternion().setFromEuler(new Euler(Math.sin(t * 1.27 + f * 2 + 0.6) * VIEWMODEL.swayRot, 0, Math.sin(t * 0.71 + f) * VIEWMODEL.swayRot)));
     return { pos: pos.applyMatrix4(this.delta), quat: quat.premultiply(this.deltaQ) };
   }
 
@@ -316,6 +342,7 @@ export class App {
    */
   private act(side: Side, fases: Fase[], mundo: boolean): void {
     if (mundo) this.hands[side].setLayer(LAYER_WORLD);
+    this.inWorld[side] = mundo;
     this.acting[side] = new Sequencia(fases);
   }
 
@@ -326,25 +353,62 @@ export class App {
     return rest;
   }
 
-  /** Fase que leva a mão da pose atual até `destino` (reavaliado a cada quadro). */
-  private ir(side: Side, destino: () => Pose, dur: number, extra: Omit<Fase, 'dur'> = {}): Fase {
+  /**
+   * Trajetória da mão por uma lista de pontos, pensada para parecer um gesto e não um robô:
+   * - a velocidade é contínua nos pontos de passagem (`passa`), em vez de parar e arrancar em cada um;
+   * - entre duas paradas o perfil é de mínimo jerk (o dos movimentos de alcance humanos);
+   * - o percurso faz um leve arco, e a rotação da mão se adianta à posição (chega orientada ao alvo).
+   * As poses são reavaliadas a cada quadro, então o alvo pode se mexer (ex.: a mandíbula abrindo).
+   */
+  private caminho(side: Side, pts: Ponto[]): Fase[] {
     const hand = this.hands[side];
-    const p0 = new Vector3();
-    const q0 = new Quaternion();
+    return pts.map((pt, i): Fase => {
+      const p0 = new Vector3(), v0 = new Vector3(), v1 = new Vector3(), q0 = new Quaternion();
+      const next = pts[i + 1];
+      return {
+        dur: pt.dur,
+        linear: true,
+        inicio: () => {
+          p0.copy(hand.root.position);
+          q0.copy(hand.root.quaternion);
+          // Sai com a velocidade que a mão já tem (zero depois de uma parada).
+          if (i > 0 && !pts[i - 1].passa) v0.set(0, 0, 0);
+          else v0.copy(this.handVel[side]).multiplyScalar(pt.dur);
+          pt.inicio?.();
+        },
+        update: (u) => {
+          pt.update?.(u);
+          const d = pt.pose();
+          const pos = hand.root.position;
+          if (pt.passa && next) v1.copy(next.pose().pos).sub(p0).multiplyScalar(pt.dur / (pt.dur + next.dur));
+          else v1.set(0, 0, 0);
+          if (v0.lengthSq() < 1e-8 && v1.lengthSq() < 1e-8) pos.lerpVectors(p0, d.pos, minJerk(u));
+          else pos.set(hermite(p0.x, v0.x, d.pos.x, v1.x, u), hermite(p0.y, v0.y, d.pos.y, v1.y, u), hermite(p0.z, v0.z, d.pos.z, v1.z, u));
+          const arco = pt.arco ?? Math.min(0.03, p0.distanceTo(d.pos) * 0.12);
+          pos.y += arco * 4 * u * (1 - u);
+          hand.root.quaternion.slerpQuaternions(q0, d.quat, minJerk(Math.min(1, u * 1.25)));
+        },
+        fim: pt.fim,
+      };
+    });
+  }
+
+  /** Uma parada só: leva a mão da pose atual até `destino` (reavaliado a cada quadro). */
+  private ir(side: Side, destino: () => Pose, dur: number, extra: Omit<Ponto, 'pose' | 'dur'> = {}): Fase {
+    return this.caminho(side, [{ pose: destino, dur, ...extra }])[0];
+  }
+
+  /** Mantém a mão presa a uma pose que se move (ex.: apoiando a cabeça) por `dur` segundos. */
+  private seguir(side: Side, pose: () => Pose, dur: number, extra: Omit<Fase, 'dur'> = {}): Fase {
+    const hand = this.hands[side];
     return {
+      ...extra,
       dur,
-      inicio: () => {
-        p0.copy(hand.root.position);
-        q0.copy(hand.root.quaternion);
-        extra.inicio?.();
-      },
       update: (t) => {
         extra.update?.(t);
-        const d = destino();
-        hand.root.position.lerpVectors(p0, d.pos, t);
-        hand.root.quaternion.slerpQuaternions(q0, d.quat, t);
+        const d = pose();
+        hand.place(d.pos, d.quat);
       },
-      fim: extra.fim,
     };
   }
 
@@ -358,7 +422,8 @@ export class App {
     if (this.busy(side) || (!velho && !novo) || velho === novo || (novo && novo.holder)) return;
     if (novo) novo.holder = side; // reservado: deixa de ser clicável
     this.act(side, [
-      this.ir(side, () => this.dipPose(side), 0.13, {
+      this.ir(side, () => this.dipPose(side), 0.16, {
+        arco: 0,
         fim: () => {
           velho?.placeOnTray(this.world.group);
           hand.tool = novo;
@@ -369,7 +434,7 @@ export class App {
           }
         },
       }),
-      this.ir(side, () => this.restPose(side), 0.24),
+      this.ir(side, () => this.restPose(side), 0.3, { arco: 0 }),
     ], false);
   }
 
@@ -425,8 +490,8 @@ export class App {
   }
 
   /**
-   * Coxim e posição olfativa, com corte para a vista lateral: a cabeça é erguida, o coxim desliza sob o
-   * occipício e a cabeça é estendida sobre ele.
+   * Coxim e posição olfativa, com corte para a vista lateral. Uma mão ergue a cabeça pelo occipício, a que
+   * trouxe o coxim o desliza por baixo, a cabeça é pousada e depois estendida com a mão na fronte.
    */
   private doSniff(side: Side): void {
     const p = this.patient;
@@ -436,54 +501,94 @@ export class App {
     coxim.consume();
     this.easy.olfativa = true; // a colinha já avança; os comandos ficam bloqueados até o corte terminar
     this.mode = 'lateral';
+    this.ui.blink();
     this.setHover(null);
     for (const s of SIDES) this.hands[s].setLayer(LAYER_WORLD);
 
-    const z0 = p.towelRest.z - 0.36;
+    const z0 = p.towelRest.z - 0.34;
+    const altura = p.towel.scale.y;
     p.towel.visible = true;
     p.towel.position.set(0, p.towelRest.y, z0);
-    // Mãos livres participam: a esquerda apoia a cabeça, a direita desliza o coxim.
-    if (!this.hands.left.tool) {
-      this.pin.left = () => ({
-        pos: new Vector3(p.headCenter.x + p.headRadii.x + 0.03, p.headCenter.y - 0.02, p.headCenter.z + 0.01),
-        quat: Q_APOIO,
-      });
+    // Tempos do corte (s): aproximar, erguer, deslizar o coxim, pousar, levar a mão à fronte, estender.
+    const T = { chegar: 0.9, erguer: 0.9, deslizar: 0.9, pousar: 0.8, trocar: 0.75, estender: 1.0, ver: 2.0 };
+
+    // Mão que traz o coxim: segura a borda mais próxima e o empurra para baixo da cabeça.
+    const lado = side === 'left' ? 1 : -1;
+    const borda = (): Pose => ({
+      pos: new Vector3(lado * 0.06, p.towel.position.y + altura / 2 - PALMA + 0.004, p.towel.position.z - COXIM.largura / 2 + 0.035),
+      quat: Q_LIVRE,
+    });
+    this.act(side, [
+      this.ir(side, borda, T.chegar),
+      this.seguir(side, borda, T.erguer + T.deslizar),
+      { dur: 0.2 },
+      this.ir(side, () => this.restPose(side), 0.7),
+    ], true);
+
+    // A outra mão, se estiver livre, ergue a cabeça pelo occipício e depois a estende pela fronte.
+    const outra: Side = side === 'left' ? 'right' : 'left';
+    if (!this.hands[outra].tool) {
+      const nuca = (): Pose => ({ pos: p.nuca().add(new Vector3(0, PALMA - 0.004, -0.012)), quat: Q_NUCA });
+      const testa = (): Pose => ({ pos: p.landmark('fronte').add(new Vector3(0, -PALMA + 0.006, -0.01)), quat: Q_TESTA });
+      const sobreTesta = (): Pose => {
+        const t = testa();
+        t.pos.add(new Vector3(0, 0.06, -0.05));
+        return t;
+      };
+      const atrasDaCabeca = (): Pose => {
+        const n = nuca();
+        n.pos.add(new Vector3(0, 0, -0.14));
+        return n;
+      };
+      this.act(outra, [
+        ...this.caminho(outra, [{ pose: atrasDaCabeca, dur: T.chegar * 0.6, passa: true }, { pose: nuca, dur: T.chegar * 0.4, arco: 0 }]),
+        this.seguir(outra, nuca, T.erguer + T.deslizar + T.pousar),
+        ...this.caminho(outra, [
+          { pose: atrasDaCabeca, dur: T.trocar * 0.3, passa: true, arco: 0 },
+          { pose: sobreTesta, dur: T.trocar * 0.4, passa: true },
+          { pose: testa, dur: T.trocar * 0.3, arco: 0 },
+        ]),
+        this.seguir(outra, testa, T.estender + 0.25),
+        this.ir(outra, () => this.restPose(outra), 0.7),
+      ], true);
     }
-    if (!this.hands.right.tool) {
-      const h = p.towel.scale.y;
-      this.pin.right = () => ({
-        pos: new Vector3(-0.07, p.towel.position.y + h / 2 + 0.03, p.towel.position.z - 0.07),
-        quat: Q_LIVRE,
-      });
-    }
+
     this.ui.setCaption('Cabeça em posição neutra, apoiada no colchão.');
     this.cut = new Sequencia([
-      { dur: 0.9 },
-      { dur: 0.8, update: (t) => p.applyPose({ flex: 1.3 * t, ext: 0.15 * t }) },
-      { dur: 0.8, update: (t) => (p.towel.position.z = lerp(z0, p.towelRest.z, t)) },
-      { dur: 0.9, update: (t) => p.applyPose({ flex: lerp(1.3, 1, t), ext: lerp(0.15, 1, t) }) },
+      { dur: T.chegar },
+      { dur: T.erguer, update: (t) => p.applyPose({ flex: 1.3 * t, ext: 0.15 * t }) },
+      { dur: T.deslizar, update: (t) => (p.towel.position.z = lerp(z0, p.towelRest.z, t)) },
+      { dur: T.pousar, update: (t) => p.applyPose({ flex: lerp(1.3, 1, t), ext: lerp(0.15, 0.4, t) }) },
+      { dur: T.trocar },
       {
-        dur: 2.2,
-        inicio: () => {
-          this.pin.left = this.pin.right = null;
-          this.ui.setCaption('Posição olfativa: coxim sob o occipício, pescoço fletido e cabeça estendida.');
-        },
+        dur: T.estender,
+        inicio: () => this.ui.setCaption('Posição olfativa: coxim sob o occipício, pescoço fletido e cabeça estendida.'),
+        update: (t) => p.applyPose({ ext: lerp(0.4, 1, t) }),
       },
+      { dur: T.ver },
       {
         dur: 0,
         fim: () => {
-          this.easy.olfativa = true;
           this.mode = 'medico';
+          this.ui.blink();
           this.ui.setCaption(null);
           this.world.refreshLandmarks();
-          for (const s of SIDES) this.hands[s].setLayer(LAYER_FPS);
+          for (const s of SIDES) {
+            this.acting[s] = null;
+            this.inWorld[s] = false;
+            this.hands[s].setLayer(LAYER_FPS);
+          }
+          this.updateView();
           this.snapHands();
         },
       },
     ]);
   }
 
-  /** Abertura da boca em tesoura com a mão direita: polegar e indicador nos dentes, a mandíbula desce. */
+  /**
+   * Abertura da boca em tesoura com a mão direita: o polegar e o indicador vão aos dentes e se afastam,
+   * a mandíbula desce acompanhada pela mão e a cabeça cede um pouco em extensão.
+   */
   private doOpenMouth(): void {
     const p = this.patient;
     if (!p) return;
@@ -498,22 +603,34 @@ export class App {
     };
     const pre = (): Pose => {
       const a = at();
-      a.pos.add(new Vector3(0, 0.06, -0.05));
+      a.pos.add(new Vector3(-0.02, 0.07, -0.06));
       return a;
     };
     this.act(side, [
-      // Gesto de tesoura: indicador e polegar estendidos, os outros dedos recolhidos.
-      this.ir(side, pre, 0.45, { inicio: () => (hand.fingerCurl = [0.12, 0.85, 0.95, 1, 0.05]) }),
-      this.ir(side, at, 0.25),
-      this.ir(side, at, 0.7, { update: (t) => p.applyPose({ jaw: JAW_ABERTA * t }) }),
-      { dur: 0.3 },
-      this.ir(side, () => this.restPose(side), 0.5, {
-        inicio: () => {
-          this.easy.bocaAberta = true;
-          hand.fingerCurl = null;
-          this.world.refreshLandmarks();
+      // Gesto de tesoura: indicador e polegar estendidos e juntos, os outros dedos recolhidos.
+      ...this.caminho(side, [
+        { pose: pre, dur: 0.55, passa: true, inicio: () => (hand.fingerCurl = [0.3, 0.85, 0.95, 1, 0.35]) },
+        { pose: at, dur: 0.35, arco: 0 },
+      ]),
+      this.seguir(side, at, 0.95, {
+        update: (t) => {
+          p.applyPose({ jaw: JAW_ABERTA * t, ext: 1 + 0.06 * Math.sin(Math.PI * t) });
+          // Os dedos se afastam enquanto a boca abre.
+          hand.fingerCurl = [lerp(0.3, 0, t), 0.85, 0.95, 1, lerp(0.35, 0, t)];
         },
       }),
+      this.seguir(side, at, 0.25),
+      ...this.caminho(side, [
+        {
+          pose: pre, dur: 0.35, passa: true, arco: 0,
+          inicio: () => {
+            this.easy.bocaAberta = true;
+            hand.fingerCurl = null;
+            this.world.refreshLandmarks();
+          },
+        },
+        { pose: () => this.restPose(side), dur: 0.5 },
+      ]),
     ], true);
   }
 
@@ -562,26 +679,25 @@ export class App {
       }
       return perfil[perfil.length - 1].h;
     };
-    // Canal da laringoscopia: tubo de seção elíptica que contém a linha de visão e a lâmina. Tudo o que
-    // estiver dentro dele (língua, epiglote, palato mole) é empurrado radialmente para fora; longe dele
-    // nada se move. É um campo contínuo, então a mucosa só "veste" o canal, sem rasgar.
-    const fim = comprimento - VISAO.folgaLaringe;
-    p.deformTissue((P) => {
+    // Canal da laringoscopia. A língua e a epiglote que estiverem entre a linha de visão e a lâmina são
+    // comprimidas contra a lâmina (sempre para anterior: a língua é uma folha contínua e precisa passar
+    // inteira para o mesmo lado). O palato mole e a úvula cedem para posterior.
+    // (A laringe em si é protegida pelos pesos do paciente; aqui só se limita o início, junto aos dentes.)
+    p.deformTissue((P, tipo) => {
       const rel = P.clone().sub(boca);
       const s = rel.dot(dir);
-      const ends = smooth(0, 0.02, s) * (1 - smooth(fim - 0.012, fim, s));
-      if (ends < 0.02) return null;
-      const frente = Math.min(teto(s), VISAO.tetoMax) + VISAO.folgaLamina; // limite anterior: logo além da lâmina
-      const centro = (frente - VISAO.folgaPalato) / 2;
-      const ry = ((frente + VISAO.folgaPalato) / 2) * ends;
-      const rx = Math.max((frente + VISAO.folgaPalato) / 2, VISAO.canalLargura) * ends;
-      const nu = (rel.x - VISAO.laminaEsquerda) / rx;
-      let nv = (rel.dot(anterior) - centro) / ry;
-      let r = Math.hypot(nu, nv);
-      if (r > 3.5) return null;
-      if (r < 1e-3) [nv, r] = [1e-3, 1e-3]; // no eixo: sai para anterior
-      const k = Math.cbrt(r ** 3 + 1) / r - 1;
-      return X.clone().multiplyScalar(nu * k * rx).addScaledVector(anterior, nv * k * ry);
+      const ends = smooth(0, 0.02, s) * (1 - smooth(comprimento, comprimento + 0.01, s));
+      if (ends <= 0) return null;
+      const h = rel.dot(anterior);
+      const x = rel.x - VISAO.laminaEsquerda;
+      const lado = 1 - smooth(VISAO.canalLargura, VISAO.canalLargura + VISAO.canalBorda, Math.abs(x));
+      if (lado <= 0) return null;
+      if (tipo === 'palato') {
+        const livre = -VISAO.folgaPalato;
+        return h > livre ? anterior.clone().multiplyScalar((livre - h) * lado * ends) : null;
+      }
+      const alvo = Math.min(teto(s), VISAO.tetoMax) + VISAO.folgaLamina; // logo além da lâmina
+      return h < alvo ? anterior.clone().multiplyScalar((alvo - h) * lado * ends) : null;
     });
     p.applyPose({ jaw, ext });
   }
@@ -624,23 +740,28 @@ export class App {
     const hand = this.hands[side];
     this.prepareSight();
     this.act(side, [
-      this.ir(side, () => this.scopePose(0, 0), 0.7),
+      this.ir(side, () => this.scopePose(0, 0), 0.85),
       {
-        dur: 1.5,
-        update: (t) => {
-          p.applyPose({ tongue: smooth(0.25, 1, t), jaw: lerp(JAW_ABERTA, JAW_LAMINA, t), ext: lerp(1, EXT_LAMINA, t) });
+        // Inserção num gesto só: entra pela direita, varre a língua e avança até a valécula.
+        dur: 1.8,
+        linear: true,
+        update: (u) => {
+          const t = minJerk(u);
+          p.applyPose({ tongue: smooth(0.2, 1, t), jaw: lerp(JAW_ABERTA, JAW_LAMINA, t), ext: lerp(1, EXT_LAMINA, t) });
           const pose = this.scopePose(t, 0);
           hand.place(pose.pos, pose.quat);
         },
       },
       {
-        dur: 0.6,
-        update: (t) => {
-          const pose = this.scopePose(1, t);
+        // Tração no eixo do cabo.
+        dur: 0.7,
+        linear: true,
+        update: (u) => {
+          const pose = this.scopePose(1, minJerk(u));
           hand.place(pose.pos, pose.quat);
         },
       },
-      { dur: 0.5 },
+      { dur: 0.45 },
       { dur: 0, fim: () => this.enterInside() },
     ], true);
   }
@@ -649,6 +770,7 @@ export class App {
   private enterInside(): void {
     this.easy.laringoscopia = true;
     this.mode = 'interna';
+    this.ui.blink();
     this.active = 'right';
     this.setHover(null);
     this.pin.left = () => this.scopePose(1, 1);
@@ -666,6 +788,7 @@ export class App {
     const hand = this.hands[side];
     this.easy.laringoscopia = false;
     this.mode = 'medico';
+    this.ui.blink();
     this.pin.left = null;
     hand.setVisible(true);
     this.ui.setCaption(null);
@@ -674,8 +797,10 @@ export class App {
     this.snapHands();
     this.act(side, [
       {
-        dur: 0.9,
-        update: (t) => {
+        dur: 1.1,
+        linear: true,
+        update: (u) => {
+          const t = minJerk(u);
           p.applyPose({ tongue: 1 - smooth(0, 0.75, t), jaw: lerp(JAW_LAMINA, JAW_ABERTA, t), ext: lerp(EXT_LAMINA, 1, t) });
           const pose = this.scopePose(1 - t, 1 - t);
           hand.place(pose.pos, pose.quat);
@@ -876,6 +1001,8 @@ export class App {
       this.view.lookAt(sight.mira);
     } else {
       const eye = DOCTOR.eye.clone().add(this.lean);
+      // O médico se debruça um pouco sobre o paciente enquanto age nele.
+      eye.addScaledVector(this.world.landmarks.boca.clone().sub(eye).normalize(), VIEWMODEL.focus * this.focus);
       const dir = DOCTOR.lookAt.clone().sub(DOCTOR.eye).normalize();
       dir.applyAxisAngle(Y, this.yaw);
       const side = dir.clone().cross(Y).normalize();
@@ -910,13 +1037,13 @@ export class App {
       cam.updateProjectionMatrix();
     }
     cam.updateMatrixWorld();
-    // Visão interna: só a luz da lâmina e uma luz fraca junto à câmera; o ambiente da sala quase não entra.
-    const inside = this.mode === 'interna' && !this.debugView;
+    // Visão pela boca: uma luz junto ao olho do operador (como um fotóforo) ilumina o canal até a laringe;
+    // a luz ambiente da sala entra pouco.
+    const inside = this.mode === 'interna';
     this.innerLight.intensity = inside ? INTERNA.luzCamera : 0;
     if (inside && this.sight) {
-      // Junto à lâmina, a meio caminho da laringe (onde fica a lâmpada de verdade), afastada do aço.
       const st = this.sight;
-      this.innerLight.position.copy(st.ponta).addScaledVector(st.dir, -VISAO.luzAtePonta).addScaledVector(st.anterior, -0.01).addScaledVector(X, -0.006);
+      this.innerLight.position.copy(st.mira).lerp(st.boca, SHOTS.interna.recuo + 0.06).addScaledVector(st.anterior, -SHOTS.interna.posterior);
     }
     this.scene.environmentIntensity = inside ? INTERNA.ambiente : 0.45;
     const scope = this.tools.find((t) => t.def.id === 'laringoscopio');
@@ -925,10 +1052,14 @@ export class App {
 
   private updateHands(dt: number): void {
     const reach = (DOCTOR.upperArm + DOCTOR.forearm) * 0.96;
+    const alvoFoco = this.mode === 'medico' && (this.inWorld.left || this.inWorld.right) ? 1 : 0;
+    this.focus += (alvoFoco - this.focus) * (1 - Math.exp(-3.5 * dt));
+    const antes = new Vector3();
     for (const side of SIDES) {
       const hand = this.hands[side];
       const seq = this.acting[side];
       const pin = this.pin[side];
+      antes.copy(hand.root.position);
       if (pin) {
         const pose = pin();
         const k = 1 - Math.exp(-12 * dt);
@@ -937,6 +1068,7 @@ export class App {
       } else if (seq) {
         if (seq.update(dt)) {
           this.acting[side] = null;
+          this.inWorld[side] = false;
           if (!this.pin[side] && this.mode !== 'lateral') hand.setLayer(LAYER_FPS);
         }
       } else {
@@ -945,6 +1077,7 @@ export class App {
         hand.root.position.lerp(rest.pos, k);
         hand.root.quaternion.slerp(rest.quat, k);
       }
+      if (dt > 1e-5) this.handVel[side].copy(hand.root.position).sub(antes).divideScalar(dt);
       // Ombro preso à câmera (fora da tela). Se o alvo está além do alcance, o cotovelo é resolvido com um
       // ombro adiantado e a manga é desenhada desde o ombro real: o braço alonga em vez de aparecer solto.
       const origin = DOCTOR.shoulder[side].clone().applyMatrix4(this.delta);
