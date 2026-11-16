@@ -12,7 +12,7 @@ import { pick, type PickTarget } from './game/picking';
 import { Hand } from './hands/hand';
 import { leanIntent, lookIntent } from './input/controls';
 import { Input } from './input/input';
-import { gripQuat, readyHandQuat, Tool, TOOL_DEFS, TRAY_SIZE, TRAY_TOP, type ToolId } from './tools/tools';
+import { readyHandQuat, Tool, TOOL_DEFS, TRAY_SIZE, TRAY_TOP, type ToolId } from './tools/tools';
 import { UI } from './ui/ui';
 
 const SIDES: Side[] = ['left', 'right'];
@@ -22,8 +22,8 @@ const LAYER_WORLD = 0;
 const LAYER_FPS = 1;
 /** Mão livre em repouso: palma para baixo, dedos levemente caídos. */
 const Q_LIVRE = new Quaternion().setFromEuler(new Euler(0.35, 0, 0));
-/** Mão sobre a bandeja: palma para baixo, dedos apontando para a direita do médico. */
-const Q_BANDEJA = new Quaternion().setFromAxisAngle(Y, -Math.PI / 2);
+/** Troca de instrumento na camada FPS: quanto a mão desce (para fora da tela) antes de voltar. */
+const MERGULHO = new Vector3(0, -0.16, -0.06);
 /** Mão que toca o paciente: dedos apontando para baixo e para frente. */
 const Q_TOQUE = new Quaternion().setFromEuler(new Euler(0.8, 0, 0));
 
@@ -209,11 +209,20 @@ export class App {
     return { pos: pos.applyMatrix4(this.delta), quat: quat.premultiply(this.deltaQ) };
   }
 
-  /** Inicia uma animação no mundo: a mão sai da camada FPS e volta a ela no fim. */
-  private act(side: Side, fases: Fase[]): void {
-    const hand = this.hands[side];
-    hand.setLayer(LAYER_WORLD);
+  /**
+   * Inicia uma animação da mão. Com `mundo`, ela sai da camada FPS (oclusão correta, para mexer no
+   * paciente) e volta a ela no fim; sem isso, a animação acontece toda na camada FPS.
+   */
+  private act(side: Side, fases: Fase[], mundo: boolean): void {
+    if (mundo) this.hands[side].setLayer(LAYER_WORLD);
     this.acting[side] = new Sequencia(fases);
+  }
+
+  /** Pose de repouso deslocada para baixo, fora da tela (troca de instrumento). */
+  private dipPose(side: Side): Pose {
+    const rest = this.restPose(side);
+    rest.pos.add(MERGULHO.clone().applyQuaternion(this.deltaQ));
+    return rest;
   }
 
   /** Fase que leva a mão da pose atual até `destino` (reavaliado a cada quadro). */
@@ -238,67 +247,41 @@ export class App {
     };
   }
 
-  /** Pega um instrumento da bandeja: a mão vai até ele, fecha, acomoda na empunhadura e volta para a tela. */
+  /**
+   * Pega um instrumento da bandeja, 100% na camada FPS: a mão não vai até a bandeja. Ela desce um pouco,
+   * o instrumento sai da bandeja e aparece empunhado, e a mão sobe de volta.
+   */
   pickUp(side: Side, tool: Tool): void {
     const hand = this.hands[side];
     if (hand.tool || tool.holder || this.busy(side)) return;
     tool.holder = side; // reservado: deixa de ser clicável
-    const grab = tool.gripWorld().add(new Vector3(0, 0.02, 0));
-    const above = grab.clone().add(new Vector3(0, 0.1, 0));
-    const p0 = new Vector3();
-    const q0 = new Quaternion();
-    const grip = gripQuat(side);
-    hand.curlOverride = 0;
     this.act(side, [
-      this.ir(side, () => ({ pos: above, quat: Q_BANDEJA }), 0.5),
-      this.ir(side, () => ({ pos: grab, quat: Q_BANDEJA }), 0.22),
-      this.ir(side, () => ({ pos: above, quat: Q_BANDEJA }), 0.35, {
-        inicio: () => {
+      this.ir(side, () => this.dipPose(side), 0.13, {
+        fim: () => {
           hand.tool = tool;
-          hand.curlOverride = null;
-          tool.attachTo(hand.anchor, side, true);
-          p0.copy(tool.object.position);
-          q0.copy(tool.object.quaternion);
+          tool.attachTo(hand.anchor, side);
+          hand.setLayer(LAYER_FPS);
+          this.ui.flash(`Mão ${sideName(side)}: ${tool.def.nome}`);
         },
-        update: (t) => {
-          tool.object.position.copy(p0).multiplyScalar(1 - t);
-          tool.object.quaternion.slerpQuaternions(q0, grip, t);
-        },
-        fim: () => this.ui.flash(`Mão ${sideName(side)}: ${tool.def.nome}`),
       }),
-      this.ir(side, () => this.restPose(side), 0.55),
-    ]);
+      this.ir(side, () => this.restPose(side), 0.24),
+    ], false);
   }
 
-  /** Devolve à bandeja o instrumento que a mão segura. */
+  /** Devolve à bandeja o instrumento que a mão segura (mesma animação leve, na camada FPS). */
   putBack(side: Side): void {
     const hand = this.hands[side];
     const tool = hand.tool;
     if (!tool || this.busy(side)) return;
-    const slot = tool.trayPose();
-    const drop = slot.pos.clone().add(new Vector3(0, 0.02, 0));
-    const above = drop.clone().add(new Vector3(0, 0.1, 0));
-    const p0 = new Vector3();
-    const q0 = new Quaternion();
     this.act(side, [
-      this.ir(side, () => ({ pos: above, quat: Q_BANDEJA }), 0.55),
-      this.ir(side, () => ({ pos: drop, quat: Q_BANDEJA }), 0.25, {
-        inicio: () => {
-          this.world.group.attach(tool.object);
-          tool.setLight(false);
+      this.ir(side, () => this.dipPose(side), 0.13, {
+        fim: () => {
           hand.tool = null;
-          hand.curlOverride = 0;
-          p0.copy(tool.object.position);
-          q0.copy(tool.object.quaternion);
+          tool.placeOnTray(this.world.group);
         },
-        update: (t) => {
-          tool.object.position.lerpVectors(p0, slot.pos, t);
-          tool.object.quaternion.slerpQuaternions(q0, slot.quat, t);
-        },
-        fim: () => tool.placeOnTray(this.world.group),
       }),
-      this.ir(side, () => this.restPose(side), 0.55, { fim: () => (hand.curlOverride = null) }),
-    ]);
+      this.ir(side, () => this.restPose(side), 0.24),
+    ], false);
   }
 
   /** Leva a ponta do dedo (ou do instrumento) até um ponto do mundo e volta. `aoTocar` roda no contato. */
@@ -315,7 +298,7 @@ export class App {
       this.ir(side, () => ({ pos, quat }), 0.22, { fim: aoTocar }),
       { dur: 0.3 },
       this.ir(side, () => this.restPose(side), 0.55),
-    ]);
+    ], true);
   }
 
   /** Coloca (ou tira, com null) um instrumento na mão instantaneamente. Para testes e depuração. */

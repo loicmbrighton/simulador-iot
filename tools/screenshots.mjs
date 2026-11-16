@@ -85,8 +85,6 @@ await apontar('laringoscopio');
 await shot('06_dica_laringoscopio');
 await page.mouse.down();
 await page.mouse.up();
-await page.waitForFunction(() => window.__sim.hands.left.root.position.z > 0.1);
-await page.screenshot({ path: `${out}/07_pegando_laringoscopio.png` });
 await livre();
 await shot('08_laringoscopio_na_mao_esquerda');
 

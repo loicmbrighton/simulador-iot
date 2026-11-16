@@ -16,6 +16,9 @@ Motivo: bugs da Fase 0. Ao pegar instrumentos o braço comprimia/atrapalhava a v
    fio-guia, balão-piloto, conector do tubo, cabeça) ganha destaque e uma dica ("Clique: inserir laringoscópio").
 3. **Agir:** no clique, a mão sai da camada FPS e executa a animação no mundo 3D (com oclusão correta);
    no fim volta para a tela.
+   **Só ações no paciente** (abrir a boca, inserir a lâmina, passar o tubo etc.) saem da camada FPS.
+   Pegar e devolver instrumentos fica 100% na camada FPS, estilo Minecraft: o instrumento some da bandeja
+   e aparece na mão com uma animação leve; a mão **não** se estica até a bandeja (fica feio).
 4. **Tab** troca a mão ativa (destacada na HUD). **Clique** age com a mão ativa. Pegar um instrumento da
    bandeja coloca-o na mão ativa.
 - Remove o controle livre das mãos (WASD/mouse em 3D) da Fase 0; WASD/setas podem ficar para olhar/inclinar.
@@ -51,7 +54,7 @@ O paciente começa com a cabeça em posição **neutra** (a posição olfativa �
 ## Estado atual
 - **Etapa 1 da implementação concluída** (detalhes técnicos no `CLAUDE.md`, seção "Código"): mãos em repouso
   na camada FPS, cursor com destaque e dica, clique com a mão ativa, Tab, pegar e devolver instrumentos com
-  animação no mundo, menu só com o Modo Easy. Controle livre das mãos e treino de precisão removidos.
+  animação leve na camada FPS, menu só com o Modo Easy. Controle livre das mãos e treino de precisão removidos.
 - A bandeja foi movida para a direita do paciente, na altura do ombro, para caber na visão padrão.
 - Clicar na cabeça ou na boca por enquanto só leva a mão até o ponto (sem efeito no paciente).
 - **Próximo (etapa 2):** o paciente ainda começa já em posição olfativa (`Patient` chama

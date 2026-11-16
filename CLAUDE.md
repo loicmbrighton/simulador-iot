@@ -102,14 +102,16 @@ src/
 ```
 - Coordenadas em metros: +X = esquerda do médico/paciente, +Y = cima, +Z = pés do paciente.
 - **Mãos (modelo híbrido):** em repouso ficam presas à câmera e são desenhadas na camada 1, numa segunda
-  passada com a profundidade limpa (nunca atravessam a cena). Numa ação (`App.act`) a mão passa para a
-  camada 0 (mundo, com oclusão e sombra), executa a `Sequencia` e volta. Luzes valem nas duas camadas.
+  passada com a profundidade limpa (nunca atravessam a cena). **Pegar e devolver instrumentos é 100% na
+  camada FPS** (decisão do usuário): a mão não vai até a bandeja; ela desce um pouco, o instrumento aparece
+  empunhado e a mão sobe. A mão só sai da camada FPS para a camada 0 (mundo, com oclusão e sombra) quando
+  mexe no paciente (`App.act(..., true)`). Luzes valem nas duas camadas.
 - **Controles:** mouse aponta (destaque + dica), clique age com a mão ativa, Tab troca a mão ativa,
   WASD ou botão direito olham em volta, setas inclinam o corpo, X recentraliza, H ajuda, Esc pausa.
 - **Alvos atuais:** instrumentos na bandeja (pegar), bandeja (devolver, com a mão ocupada), cabeça e boca.
   Cabeça e boca por enquanto só fazem a mão tocar o ponto: as animações das etapas entram em `App.click`.
 - A bandeja fica à direita do paciente, na altura do ombro, dentro da visão padrão (tudo alcançável só
-  com o cursor). Para alvos além do alcance o braço é alongado a partir do ombro (fora da tela).
+  com o cursor). Em ações no paciente além do alcance o braço é alongado a partir do ombro (fora da tela).
 - Nomes de ossos no three.js perdem o ponto (`upperarm01.L` → `upperarm01L`; GLTFLoader sanitiza).
 - A página publicada bloqueia fetch de `data:`/`blob:`: o glTF é baixado por fetch relativo e montado como
   .glb em memória (`downloadPatient`); publicar `pagina.html` com `paciente.json` como arquivo de apoio.
