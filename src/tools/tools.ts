@@ -97,6 +97,8 @@ export class Tool {
   readonly object: Group;
   readonly tipLocal: Vector3;
   readonly light?: PointLight;
+  /** Linha central da lâmina (só o laringoscópio), no espaço local. */
+  readonly spine?: Vector3[];
   private readonly lamp?: Mesh;
   /** Mão que segura (ou reservou) a ferramenta; 'usado' = já aplicada no paciente (coxim sob a cabeça). */
   holder: Side | 'usado' | null = null;
@@ -106,6 +108,7 @@ export class Tool {
     this.object = model.object;
     this.tipLocal = model.tip;
     this.light = model.light;
+    this.spine = model.spine;
     this.lamp = model.lamp;
   }
 

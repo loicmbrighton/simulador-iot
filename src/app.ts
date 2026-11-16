@@ -1,6 +1,6 @@
 import {
-  ACESFilmicToneMapping, Box3, Clock, Euler, Matrix4, Object3D, PCFShadowMap, PerspectiveCamera, PMREMGenerator,
-  PointLight, Quaternion, Raycaster, Scene, SRGBColorSpace, Vector3, WebGLRenderer,
+  ACESFilmicToneMapping, Box3, Clock, Euler, Matrix4, Mesh, MeshBasicMaterial, Object3D, PCFShadowMap, PerspectiveCamera,
+  Plane, PMREMGenerator, PointLight, Quaternion, Raycaster, Scene, SphereGeometry, SRGBColorSpace, Vector3, WebGLRenderer,
 } from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { DOCTOR, LOOK, SCENARIOS, SHOTS, VIEWMODEL, VITALS, type ScenarioId, type Side } from './config';
@@ -34,13 +34,37 @@ const Q_APOIO = new Quaternion().setFromRotationMatrix(
 );
 /** Abertura da mandíbula (graus): boca aberta em tesoura e com a lâmina tracionando. */
 const JAW_ABERTA = 27;
-const JAW_LAMINA = 31;
+const JAW_LAMINA = 32;
+/** Extensão extra da cabeça durante a laringoscopia (1 = posição olfativa). */
+const EXT_LAMINA = 1.2;
 /**
- * Luzes da visão interna (candelas): a cena é pequena, então valores baixos já iluminam bem. A lâmpada da
- * lâmina fica quase apagada aqui (ela está a milímetros do aço e estouraria a imagem); quem ilumina a glote
- * é a luz junto à câmera.
+ * Luzes da visão pela boca. A lâmpada da lâmina fica quase apagada (está a milímetros do aço e estouraria a
+ * imagem); quem ilumina é uma luz no lugar dela, um pouco afastada.
  */
-const INTERNA = { luzCamera: 0.001, luzLamina: 0.00005, ambiente: 0.1 };
+const INTERNA = { luzCamera: 0.07, luzLamina: 0.00005, ambiente: 0.4 };
+/** Geometria da laringoscopia (metros). Ver `App.prepareSight`. */
+const VISAO = {
+  /** A linha de visão passa esta distância abaixo da borda dos incisivos superiores. */
+  sobIncisivos: 0.004,
+  /** 0 = mira na glote, 1 = mira na parede posterior da hipofaringe (entrada do esôfago). */
+  miraEsofago: 0.3,
+  /** Ponta da lâmina (valécula): distância até a mira ao longo da linha de visão, afastamento anterior e para a esquerda. */
+  pontaAteMira: 0.03,
+  pontaAnterior: 0.0115,
+  laminaEsquerda: 0.004,
+  /** Quanto a corda da lâmina se inclina para anterior em direção à boca (tangente do ângulo). */
+  inclinacaoLamina: 0.21,
+  /** O canal vai até esta distância além da lâmina e termina `folgaLaringe` antes da mira. */
+  folgaLamina: 0.002,
+  folgaLaringe: 0.012,
+  /** Perto da boca a lâmina se afasta muito da linha de visão: o canal não a acompanha além deste limite. */
+  tetoMax: 0.02,
+  /** Semilargura mínima do canal (a espátula tem 21 mm de largura). */
+  canalLargura: 0.014,
+  /** Espaço livre mantido atrás (posterior) da linha de visão: o palato mole e a úvula cedem até aqui. */
+  folgaPalato: 0.011,
+  luzAtePonta: 0.045,
+};
 /** Instrumentos que a mão direita pode pegar pela roda, na visão da laringoscopia. */
 const RODA: ToolId[] = ['tubo', 'aspirador', 'seringa', 'ambu'];
 
@@ -107,8 +131,13 @@ export class App {
   private readonly pin: Record<Side, (() => Pose) | null> = { left: null, right: null };
   /** Corte de câmera em andamento: bloqueia os comandos até terminar. */
   private cut: Sequencia | null = null;
-  /** Luz junto à câmera na visão interna (a ponta da lâmina ilumina a glote). */
-  private readonly innerLight = new PointLight(0xfff1d8, 0, 0.3, 2);
+  /**
+   * Linha de visão da laringoscopia (mundo): da boca até um ponto entre a glote e a entrada do esôfago.
+   * A lâmina corre junto a ela, pelo lado anterior, e a câmera da visão pela boca fica sobre ela.
+   */
+  private sight: { boca: Vector3; mira: Vector3; dir: Vector3; anterior: Vector3; ponta: Vector3; corda: Vector3; comprimento: number } | null = null;
+  /** Luz da visão pela boca (faz o papel da lâmpada da lâmina, que fica a milímetros do aço). */
+  private readonly innerLight = new PointLight(0xfff1d8, 0, 0.4, 1.2);
 
   constructor(private readonly container: HTMLElement) {
     this.renderer = new WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -217,6 +246,7 @@ export class App {
     this.world.vitals.fc = VITALS.fc;
     this.world.vitals.spo2 = VITALS.spo2;
     this.easy = estadoInicial();
+    this.sight = null;
     this.mode = 'medico';
     this.cut = null;
     this.lean.set(0, 0, 0);
@@ -488,22 +518,92 @@ export class App {
   }
 
   /**
+   * Calcula a geometria da laringoscopia, com a boca na abertura final, e deforma a língua de acordo:
+   * - linha de visão: passa rente aos incisivos superiores e mira entre a glote e a entrada do esôfago;
+   * - lâmina: anterior à linha de visão, ponta na valécula; como a lâmina é curva, a corda fica inclinada
+   *   para que o "ventre" dela não tape a visão;
+   * - língua e epiglote: tudo o que estiver entre a linha de visão e a lâmina é comprimido contra a lâmina.
+   */
+  private prepareSight(): void {
+    const p = this.patient!;
+    const tool = this.tools.find((t) => t.def.id === 'laringoscopio')!;
+    const jaw = p.pose.jaw;
+    const ext = p.pose.ext;
+    p.applyPose({ jaw: JAW_LAMINA, ext: EXT_LAMINA, tongue: 0 });
+    const g = p.glottisFrame();
+    const mira = g.centro.clone().lerp(p.airLandmark('hipofaringePosterior'), VISAO.miraEsofago);
+    // Começa rente à borda dos incisivos superiores (um pouco para o lado da língua).
+    const boca = p.incisor('upper');
+    const ant0 = g.anterior.clone().addScaledVector(mira.clone().sub(boca).normalize(), -g.anterior.dot(mira.clone().sub(boca).normalize())).normalize();
+    boca.addScaledVector(ant0, VISAO.sobIncisivos);
+    const comprimento = boca.distanceTo(mira);
+    const dir = mira.clone().sub(boca).divideScalar(comprimento);
+    const anterior = g.anterior.clone().addScaledVector(dir, -g.anterior.dot(dir)).normalize();
+    const ponta = boca.clone().addScaledVector(dir, comprimento - VISAO.pontaAteMira)
+      .addScaledVector(anterior, VISAO.pontaAnterior).addScaledVector(X, VISAO.laminaEsquerda);
+    const corda = dir.clone().addScaledVector(anterior, -VISAO.inclinacaoLamina).normalize();
+    this.sight = { boca, mira, dir, anterior, ponta, corda, comprimento };
+
+    // Perfil da lâmina na posição final: distância ao longo da linha de visão × afastamento anterior.
+    const pose = this.scopePose(1, 1);
+    const q = pose.quat.clone().multiply(gripQuat('left', tool.def));
+    const perfil = (tool.spine ?? []).map((v) => {
+      const rel = v.clone().applyQuaternion(q).add(pose.pos).sub(boca);
+      return { s: rel.dot(dir), h: rel.dot(anterior) };
+    }).sort((a, b) => a.s - b.s);
+    const teto = (s: number): number => {
+      if (perfil.length === 0) return VISAO.pontaAnterior;
+      if (s <= perfil[0].s) return perfil[0].h;
+      for (let i = 1; i < perfil.length; i++) {
+        if (s <= perfil[i].s) {
+          const a = perfil[i - 1], b = perfil[i];
+          return a.h + ((b.h - a.h) * (s - a.s)) / Math.max(1e-6, b.s - a.s);
+        }
+      }
+      return perfil[perfil.length - 1].h;
+    };
+    // Canal da laringoscopia: tubo de seção elíptica que contém a linha de visão e a lâmina. Tudo o que
+    // estiver dentro dele (língua, epiglote, palato mole) é empurrado radialmente para fora; longe dele
+    // nada se move. É um campo contínuo, então a mucosa só "veste" o canal, sem rasgar.
+    const fim = comprimento - VISAO.folgaLaringe;
+    p.deformTissue((P) => {
+      const rel = P.clone().sub(boca);
+      const s = rel.dot(dir);
+      const ends = smooth(0, 0.02, s) * (1 - smooth(fim - 0.012, fim, s));
+      if (ends < 0.02) return null;
+      const frente = Math.min(teto(s), VISAO.tetoMax) + VISAO.folgaLamina; // limite anterior: logo além da lâmina
+      const centro = (frente - VISAO.folgaPalato) / 2;
+      const ry = ((frente + VISAO.folgaPalato) / 2) * ends;
+      const rx = Math.max((frente + VISAO.folgaPalato) / 2, VISAO.canalLargura) * ends;
+      const nu = (rel.x - VISAO.laminaEsquerda) / rx;
+      let nv = (rel.dot(anterior) - centro) / ry;
+      let r = Math.hypot(nu, nv);
+      if (r > 3.5) return null;
+      if (r < 1e-3) [nv, r] = [1e-3, 1e-3]; // no eixo: sai para anterior
+      const k = Math.cbrt(r ** 3 + 1) / r - 1;
+      return X.clone().multiplyScalar(nu * k * rx).addScaledVector(anterior, nv * k * ry);
+    });
+    p.applyPose({ jaw, ext });
+  }
+
+  /**
    * Pose da mão esquerda com o laringoscópio ao longo da inserção. `u` = 0 (lâmina sobre a boca, à
-   * direita) a 1 (ponta na valécula, na linha média); `lift` = tração no eixo do cabo (0–1).
+   * direita) a 1 (ponta na valécula); `lift` = tração no eixo do cabo (0–1).
    * Na posição de uso o cabo aponta para cima e para os pés, e a lâmina entra pela boca.
    */
   private scopePose(u: number, lift: number): Pose {
     const p = this.patient!;
     const tool = this.tools.find((t) => t.def.id === 'laringoscopio')!;
-    const gate = p.landmark('labioSuperior').lerp(p.landmark('labioInferior'), 0.4);
-    const val = p.airLandmark('valecula');
-    const d1 = val.clone().sub(gate).normalize();
-    const d0 = d1.clone().applyAxisAngle(X, 0.55); // no início a lâmina vem mais de cima
+    if (!this.sight) this.prepareSight();
+    const sight = this.sight!;
+    const gate = p.incisor('upper').lerp(p.incisor('lower'), 0.5);
+    const d1 = sight.corda;
+    const d0 = d1.clone().applyAxisAngle(X, 0.5); // no início a lâmina vem mais de cima
     const dir = d0.lerp(d1, smooth(0, 1, u)).normalize();
     // Ponta: sai de cima da boca pelo lado direito do paciente, entra pelo canto direito e vai à valécula.
     const a = gate.clone().add(new Vector3(-0.014, 0.04, -0.012));
     const b = gate.clone().add(new Vector3(-0.013, -0.006, 0.004));
-    const c = val.clone().addScaledVector(d1, -0.003);
+    const c = sight.ponta;
     const tip = a.multiplyScalar((1 - u) ** 2).addScaledVector(b, 2 * u * (1 - u)).addScaledVector(c, u * u);
     // Rotação do instrumento: cabo para cima (giro de 180° no eixo da lâmina) e a corda da lâmina em `dir`.
     const corda = tool.tipLocal.clone().sub(new Vector3(0, 0.066, 0.012));
@@ -511,7 +611,8 @@ export class App {
     const phi = a0 - Math.atan2(dir.y, dir.z);
     const quat = new Quaternion().setFromEuler(new Euler(phi, 0, Math.PI));
     const pos = tip.sub(tool.tipLocal.clone().applyQuaternion(quat));
-    pos.addScaledVector(new Vector3(0, -1, 0).applyQuaternion(quat), 0.008 * lift);
+    // Tração no eixo do cabo: no fim da inserção a lâmina ainda está "pousada"; a tração a leva ao lugar.
+    pos.addScaledVector(new Vector3(0, -1, 0).applyQuaternion(quat), -0.007 * (1 - lift));
     return { pos, quat: quat.multiply(gripQuat('left', tool.def).invert()) };
   }
 
@@ -521,12 +622,13 @@ export class App {
     if (!p) return;
     const side: Side = 'left';
     const hand = this.hands[side];
+    this.prepareSight();
     this.act(side, [
       this.ir(side, () => this.scopePose(0, 0), 0.7),
       {
         dur: 1.5,
         update: (t) => {
-          p.applyPose({ tongue: smooth(0.25, 1, t), jaw: lerp(JAW_ABERTA, JAW_LAMINA, t) });
+          p.applyPose({ tongue: smooth(0.25, 1, t), jaw: lerp(JAW_ABERTA, JAW_LAMINA, t), ext: lerp(1, EXT_LAMINA, t) });
           const pose = this.scopePose(t, 0);
           hand.place(pose.pos, pose.quat);
         },
@@ -574,13 +676,34 @@ export class App {
       {
         dur: 0.9,
         update: (t) => {
-          p.applyPose({ tongue: 1 - smooth(0, 0.75, t), jaw: lerp(JAW_LAMINA, JAW_ABERTA, t) });
+          p.applyPose({ tongue: 1 - smooth(0, 0.75, t), jaw: lerp(JAW_LAMINA, JAW_ABERTA, t), ext: lerp(EXT_LAMINA, 1, t) });
           const pose = this.scopePose(1 - t, 1 - t);
           hand.place(pose.pos, pose.quat);
         },
       },
       this.ir(side, () => this.restPose(side), 0.55, { inicio: () => this.world.refreshLandmarks() }),
     ], true);
+  }
+
+  // ------------------------------------------------------------------ depuração (testes e screenshots)
+  private readonly marks: Mesh[] = [];
+
+  /** Corta a cena num plano sagital (mostra só x < `x`); null desliga. */
+  debugSection(x: number | null): void {
+    this.renderer.clippingPlanes = x === null ? [] : [new Plane(new Vector3(-1, 0, 0), x)];
+  }
+
+  /** Marca pontos do mundo com esferas coloridas (vazio apaga). */
+  debugMarks(points: Vector3[], raio = 0.0015): void {
+    for (const m of this.marks) m.removeFromParent();
+    this.marks.length = 0;
+    points.forEach((p, i) => {
+      const m = new Mesh(new SphereGeometry(raio, 10, 8), new MeshBasicMaterial({ color: [0xffe100, 0x00e5ff, 0x00ff66, 0xff00ff, 0xffffff][i % 5], depthTest: false }));
+      m.position.copy(p);
+      m.renderOrder = 20;
+      this.marks.push(m);
+      this.scene.add(m);
+    });
   }
 
   // ------------------------------------------------------------------ cursor: alvos, dica e clique
@@ -743,12 +866,14 @@ export class App {
   /** Referencial das mãos em repouso: a visão do médico ou, na laringoscopia, a visão interna. */
   private updateView(): void {
     const p = this.patient;
-    if (this.mode === 'interna' && p) {
-      // Dentro da faringe, no eixo da laringe, olhando para a glote; "para cima" é o lado anterior.
-      const g = p.glottisFrame();
-      this.view.position.copy(g.centro).addScaledVector(g.cranial, SHOTS.interna.distancia).addScaledVector(g.anterior, -SHOTS.interna.posterior);
-      this.view.up.copy(g.anterior);
-      this.view.lookAt(g.centro);
+    const sight = this.sight;
+    if (this.mode === 'interna' && p && sight) {
+      // Visão pela boca: sobre a linha de visão, olhando para a laringe; "para cima" é o lado anterior
+      // (onde está a lâmina). Fica um pouco à direita e abaixo da lâmina, como o olho do operador.
+      this.view.position.copy(sight.mira).lerp(sight.boca, SHOTS.interna.recuo)
+        .addScaledVector(X, -SHOTS.interna.direita).addScaledVector(sight.anterior, -SHOTS.interna.posterior);
+      this.view.up.copy(sight.anterior);
+      this.view.lookAt(sight.mira);
     } else {
       const eye = DOCTOR.eye.clone().add(this.lean);
       const dir = DOCTOR.lookAt.clone().sub(DOCTOR.eye).normalize();
@@ -788,14 +913,14 @@ export class App {
     // Visão interna: só a luz da lâmina e uma luz fraca junto à câmera; o ambiente da sala quase não entra.
     const inside = this.mode === 'interna' && !this.debugView;
     this.innerLight.intensity = inside ? INTERNA.luzCamera : 0;
-    if (inside) {
-      // Um pouco à frente da câmera e para o lado posterior: ilumina a glote sem estourar a lâmina, que passa rente.
-      const g = this.patient!.glottisFrame();
-      this.innerLight.position.copy(this.view.position).addScaledVector(g.cranial, -0.022).addScaledVector(g.anterior, -0.006);
+    if (inside && this.sight) {
+      // Junto à lâmina, a meio caminho da laringe (onde fica a lâmpada de verdade), afastada do aço.
+      const st = this.sight;
+      this.innerLight.position.copy(st.ponta).addScaledVector(st.dir, -VISAO.luzAtePonta).addScaledVector(st.anterior, -0.01).addScaledVector(X, -0.006);
     }
     this.scene.environmentIntensity = inside ? INTERNA.ambiente : 0.45;
     const scope = this.tools.find((t) => t.def.id === 'laringoscopio');
-    if (scope?.light && scope.light.intensity > 0) scope.light.intensity = inside ? INTERNA.luzLamina : 0.35;
+    if (scope?.light && scope.light.intensity > 0) scope.light.intensity = this.mode === 'interna' ? INTERNA.luzLamina : 0.35;
   }
 
   private updateHands(dt: number): void {

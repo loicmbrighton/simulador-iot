@@ -1,5 +1,5 @@
 import {
-  Bone, BufferAttribute, DoubleSide, Float32BufferAttribute, Group, Mesh, MeshStandardMaterial, PlaneGeometry,
+  Bone, BufferAttribute, DoubleSide, Float32BufferAttribute, Group, Matrix3, Mesh, MeshStandardMaterial, PlaneGeometry,
   Quaternion, SkinnedMesh, Vector3, BoxGeometry, type Material,
 } from 'three';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
@@ -97,11 +97,14 @@ const AIR_LANDMARKS = {
   comissuraAnterior: new Vector3(0, 1.4765, 0.0715),
   glotePosterior: new Vector3(0, 1.4765, 0.0505),
   traqueiaAnterior: new Vector3(0, 1.446, 0.072),
+  /** Parede posterior da hipofaringe, atrás das aritenoides (entrada do esôfago). */
+  hipofaringePosterior: new Vector3(0, 1.485, 0.041),
 };
 export type AirLandmarkName = keyof typeof AIR_LANDMARKS;
 
-/** Posição olfativa: flexão do pescoço sobre o coxim (graus) e extensão da cabeça. */
-const SNIFF = { head: -20.8, neck03: -5.2, neck02: 4.4, neck01: 9.1 };
+/** Posição olfativa: flexão do pescoço sobre o coxim e extensão da cabeça (graus, por osso). */
+// Com estes ângulos o plano da face fica ~13° estendido em relação à horizontal (medido no modelo).
+const SNIFF = { head: -28, neck03: -7, neck02: 4.4, neck01: 9.1 };
 const NECK_BONES = ['head', 'neck03', 'neck02', 'neck01'] as const;
 
 export interface PatientPose {
@@ -109,9 +112,9 @@ export interface PatientPose {
   jaw: number;
   /** Flexão do pescoço: 0 = cabeça no colchão (neutra), 1 = sobre o coxim. Pode passar de 1 (cabeça erguida). */
   flex: number;
-  /** Extensão da cabeça: 0 = neutra, 1 = posição olfativa. */
+  /** Extensão da cabeça: 0 = neutra, 1 = posição olfativa; acima de 1 = extensão extra (laringoscopia). */
   ext: number;
-  /** Língua rebatida para a esquerda pela lâmina (0–1). */
+  /** Língua comprimida pela lâmina e epiglote levantada (0–1; forma definida por `deformTissue`). */
   tongue: number;
 }
 
@@ -311,40 +314,54 @@ export class Patient {
     wgt.needsUpdate = true;
   }
 
-  /**
-   * Morph da língua rebatida: os vértices da língua (cor de região) vão para a esquerda do paciente e
-   * afundam em direção ao assoalho da boca, abrindo o canal por onde a lâmina passa.
-   */
+  /** Prepara o morph da laringoscopia: um único alvo, vazio no início, preenchido por `deformTissue`. */
   private buildTongueMorph(): void {
     const air = this.air;
     if (!air) return;
-    const pos = air.geometry.getAttribute('position') as BufferAttribute;
-    const col = air.geometry.getAttribute('color') as BufferAttribute | undefined;
-    if (!col) return;
-    const delta = new Float32Array(pos.count * 3);
-    const smooth = (a: number, b: number, x: number) => {
-      const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
-      return t * t * (3 - 2 * t);
-    };
-    for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-      // Abaixo de y = 1,50 a mesma cor é das aritenoides; a valécula e a base junto à epiglote quase não
-      // se movem (transição suave, para a malha não rasgar).
-      const altura = smooth(1.503, 1.53, y);
-      if (altura <= 0) continue;
-      const d = Math.hypot(col.getX(i) - 0.74, col.getY(i) - 0.38, col.getZ(i) - 0.36);
-      const w = Math.min(1, Math.max(0, 1 - d / 0.1)) * altura;
-      if (w <= 0) continue;
-      const lateral = 1 - smooth(-0.004, 0.026, x); // lado direito e centro são empurrados; a borda esquerda quase não
-      const base = 1 - smooth(0.075, 0.1, z); // 1 na base da língua (voltada para a faringe)
-      delta[i * 3] = w * lateral * 0.011;
-      delta[i * 3 + 1] = -w * lateral * (0.007 - 0.004 * base);
-      delta[i * 3 + 2] = w * lateral * base * 0.006;
-    }
-    air.geometry.morphAttributes.position = [new Float32BufferAttribute(delta, 3)];
+    const count = air.geometry.getAttribute('position').count;
+    air.geometry.morphAttributes.position = [new Float32BufferAttribute(new Float32Array(count * 3), 3)];
     air.geometry.morphTargetsRelative = true;
     air.updateMorphTargets();
     (air.material as MeshStandardMaterial).needsUpdate = true;
+  }
+
+  /**
+   * Deforma a mucosa da via aérea (morph). `fn` recebe a posição atual de cada vértice no mundo e devolve o
+   * deslocamento desejado (mundo), ou null para não mexer. Deve ser um campo contínuo no espaço (vértices
+   * vizinhos com deslocamentos parecidos), senão a malha estica em "cortinas". O deslocamento é convertido
+   * para a pose de repouso (inversa da parte linear do skinning) e ligado/desligado por `pose.tongue`.
+   */
+  deformTissue(fn: (P: Vector3) => Vector3 | null): void {
+    const air = this.air;
+    const morph = air?.geometry.morphAttributes.position?.[0] as BufferAttribute | undefined;
+    if (!air || !morph) return;
+    const pos = air.geometry.getAttribute('position') as BufferAttribute;
+    this.root.updateMatrixWorld(true);
+    air.skeleton.update();
+    const world = air.matrixWorld;
+    const skin = (i: number, v: Vector3) => air.applyBoneTransform(i, v).applyMatrix4(world);
+    const p = new Vector3(), P = new Vector3(), q = new Vector3();
+    const L = new Matrix3(), col = [new Vector3(), new Vector3(), new Vector3()];
+    const eps = 0.001;
+    const out = morph.array as Float32Array;
+    out.fill(0);
+    for (let i = 0; i < pos.count; i++) {
+      p.fromBufferAttribute(pos, i);
+      skin(i, P.copy(p));
+      const d = fn(P);
+      if (!d) continue;
+      for (let k = 0; k < 3; k++) {
+        q.copy(p).setComponent(k, p.getComponent(k) + eps);
+        col[k].copy(skin(i, q)).sub(P).divideScalar(eps);
+      }
+      L.set(col[0].x, col[1].x, col[2].x, col[0].y, col[1].y, col[2].y, col[0].z, col[1].z, col[2].z).invert();
+      d.applyMatrix3(L);
+      out[i * 3] = d.x;
+      out[i * 3 + 1] = d.y;
+      out[i * 3 + 2] = d.z;
+    }
+    // A textura de morph é criada uma vez por geometria: descartar os buffers força a recriação com os dados novos.
+    air.geometry.dispose();
   }
 
   private armSolution: Record<string, Quaternion> = {};
@@ -465,6 +482,36 @@ export class Patient {
       }
       this.airVertex.set(name, best);
     }
+  }
+
+  private incisors: { upper: number; lower: number } | null = null;
+
+  /** Borda do incisivo central (superior ou inferior) na pose atual, no mundo. */
+  incisor(which: 'upper' | 'lower', out = new Vector3()): Vector3 {
+    const teeth = this.meshes['dentes'] as SkinnedMesh | undefined;
+    if (!teeth?.isSkinnedMesh) return out.copy(this.landmark(which === 'upper' ? 'labioSuperior' : 'labioInferior'));
+    if (!this.incisors) {
+      // Dentes da frente perto da linha média: os de baixo seguem o osso `jaw`; a borda é o extremo vertical.
+      const pos = teeth.geometry.getAttribute('position') as BufferAttribute;
+      const idx = teeth.geometry.getAttribute('skinIndex') as BufferAttribute;
+      const wgt = teeth.geometry.getAttribute('skinWeight') as BufferAttribute;
+      const jaw = teeth.skeleton.bones.findIndex((b) => b.name === 'jaw');
+      let upper = 0, lower = 0, upY = Infinity, loY = -Infinity;
+      for (let i = 0; i < pos.count; i++) {
+        if (Math.abs(pos.getX(i)) > 0.005 || pos.getZ(i) < 0.135) continue;
+        let wj = 0;
+        for (let c = 0; c < 4; c++) if (idx.getComponent(i, c) === jaw) wj += wgt.getComponent(i, c);
+        const y = pos.getY(i);
+        if (wj > 0.5) {
+          if (y > loY) [loY, lower] = [y, i];
+        } else if (y < upY) [upY, upper] = [y, i];
+      }
+      this.incisors = { upper, lower };
+    }
+    this.root.updateMatrixWorld(true);
+    teeth.skeleton.update();
+    teeth.getVertexPosition(this.incisors[which], out);
+    return out.applyMatrix4(teeth.matrixWorld);
   }
 
   /** Posição atual (mundo) de um ponto da via aérea. */

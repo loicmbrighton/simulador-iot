@@ -98,7 +98,10 @@ export const VITALS = {
 export const SHOTS = {
   /** Vista lateral da cabeça e do pescoço, para mostrar a posição olfativa. */
   lateral: { pos: new Vector3(0.98, 1.17, -0.06), target: new Vector3(0, 1.06, -0.01), fov: 40 },
-  /** Visão interna: distância da câmera até a glote ao longo do eixo da laringe, e campo de visão. */
-  interna: { distancia: 0.062, posterior: 0.004, fov: 68 },
+  /**
+   * Visão pela boca (laringoscopia): a câmera fica sobre a linha boca → laringe. `recuo` = 0 na laringe,
+   * 1 nos lábios; `direita`/`posterior` afastam a câmera da lâmina (metros).
+   */
+  interna: { recuo: 0.45, direita: 0.004, posterior: 0.002, fov: 46 },
   medico: { fov: 58 },
 };

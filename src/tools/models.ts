@@ -16,6 +16,8 @@ export interface ToolModel {
   light?: PointLight;
   /** Malha emissiva da lâmpada (acende junto com a luz). */
   lamp?: Mesh;
+  /** Linha central da lâmina, da base à ponta (laringoscópio), no espaço local do instrumento. */
+  spine?: Vector3[];
 }
 
 const UP = new Vector3(0, 1, 0);
@@ -92,7 +94,7 @@ export function buildLaryngoscope(): ToolModel {
   light.position.copy(bulbPos).add(new Vector3(0, -0.003, 0.004));
   g.add(light);
 
-  return { object: outer, tip, light, lamp };
+  return { object: outer, tip, light, lamp, spine: path.map((p) => p.clone()) };
 }
 
 // ---------------------------------------------------------------- Tubo orotraqueal 7,5 com fio-guia
