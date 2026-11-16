@@ -1,5 +1,6 @@
 import {
-  Bone, BufferAttribute, DoubleSide, Float32BufferAttribute, Group, Matrix3, Mesh, MeshStandardMaterial, PlaneGeometry,
+  Bone, BufferAttribute, CanvasTexture, DoubleSide, Float32BufferAttribute, Group, Matrix3, Mesh, MeshBasicMaterial,
+  MeshStandardMaterial, PlaneGeometry, SRGBColorSpace,
   Quaternion, SkinnedMesh, Vector3, BoxGeometry, type Material,
 } from 'three';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
@@ -99,6 +100,8 @@ const AIR_LANDMARKS = {
   traqueiaAnterior: new Vector3(0, 1.446, 0.072),
   /** Parede posterior da hipofaringe, atrás das aritenoides (entrada do esôfago). */
   hipofaringePosterior: new Vector3(0, 1.485, 0.041),
+  /** Entrada do esôfago (boca do funil atrás da cricoide). */
+  esofago: new Vector3(0, 1.474, 0.0435),
 };
 export type AirLandmarkName = keyof typeof AIR_LANDMARKS;
 
@@ -217,6 +220,7 @@ export class Patient {
     }
     if (this.air) {
       if (this.air.morphTargetInfluences) this.air.morphTargetInfluences[0] = tongue;
+      if (tongue < 0.5) this.esophagusMark.visible = false;
       const index = tongue > 0.05 ? this.indexAberto : this.indexFechado;
       if (index && this.air.geometry.index !== index) this.air.geometry.setIndex(index);
       // A via aérea só é vista pela boca, com a cabeça já posicionada. Fora disso fica oculta: nas poses
@@ -537,7 +541,7 @@ export class Patient {
         a.x += out[i * 3]; a.y += out[i * 3 + 1]; a.z += out[i * 3 + 2];
         b.x += out[j * 3]; b.y += out[j * 3 + 1]; b.z += out[j * 3 + 2];
         const depois = a.distanceTo(b);
-        return depois > 0.003 && depois > antes * 4;
+        return depois > 0.0025 && depois > antes * 3;
       };
       // Só na boca e no istmo (acima da base da língua): em volta da laringe a mucosa estica, mas não abre.
       const alto = (i: number) => pos.getY(i) > 1.53;
@@ -704,6 +708,42 @@ export class Patient {
     teeth.skeleton.update();
     teeth.getVertexPosition(this.incisors[which], out);
     return out.applyMatrix4(teeth.matrixWorld);
+  }
+
+  /**
+   * Entrada do esôfago vista na laringoscopia: uma abertura escura com borda suave. Na malha o esôfago é
+   * colapsado (uma fenda), que de longe não se lê como abertura; esta marca o deixa evidente, para que o
+   * usuário possa errar e intubar o esôfago.
+   */
+  readonly esophagusMark: Mesh = (() => {
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const g = c.getContext('2d')!;
+    const grad = g.createRadialGradient(64, 64, 6, 64, 64, 64);
+    grad.addColorStop(0, 'rgba(4,0,0,1)');
+    grad.addColorStop(0.55, 'rgba(14,2,2,0.92)');
+    grad.addColorStop(0.8, 'rgba(60,12,12,0.45)');
+    grad.addColorStop(1, 'rgba(90,20,20,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 128, 128);
+    const tex = new CanvasTexture(c);
+    tex.colorSpace = SRGBColorSpace;
+    const m = new Mesh(new PlaneGeometry(1, 1), new MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+    m.scale.set(0.02, 0.011, 1);
+    m.renderOrder = 2;
+    m.visible = false;
+    return m;
+  })();
+
+  /** Coloca a marca da entrada do esôfago no ponto `at` (mundo), voltada para `olho`. */
+  placeEsophagus(at: Vector3, olho: Vector3, anterior: Vector3): void {
+    const m = this.esophagusMark;
+    if (!m.parent) this.root.add(m);
+    // Um pouco à frente da mucosa, em direção ao olho, para não ser coberta por ela.
+    m.position.copy(at).addScaledVector(olho.clone().sub(at).normalize(), 0.0025);
+    m.up.copy(anterior);
+    m.lookAt(olho);
+    m.visible = true;
   }
 
   private skinMaterial: Material | null = null;

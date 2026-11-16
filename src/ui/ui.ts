@@ -46,6 +46,7 @@ export class UI {
   private readonly flashBox = el('div', 'redflash');
   private readonly caption = el('div', 'caption');
   private readonly fade = el('div', 'cutfade');
+  private readonly vignette = el('div', 'scopeview');
   private readonly wheel = el('div', 'wheel');
   private toastTimer = 0;
   private checklistKey = '';
@@ -62,7 +63,7 @@ export class UI {
     this.toast.setAttribute('role', 'status');
     this.caption.setAttribute('role', 'status');
     this.hud.append(
-      this.fade, this.flashBox, this.topLeft, this.vitals, this.topRight, this.checklist, this.handBoxes.left, this.handBoxes.right, this.wheel,
+      this.vignette, this.fade, this.flashBox, this.topLeft, this.vitals, this.topRight, this.checklist, this.handBoxes.left, this.handBoxes.right, this.wheel,
       this.caption, this.help, this.toast, this.hint,
     );
     root.append(this.hud, this.menu);
@@ -158,6 +159,11 @@ export class UI {
     void this.flashBox.offsetWidth; // reinicia a animação
     this.flashBox.classList.add('on');
     this.flash(msg, true);
+  }
+
+  /** Visão pela boca: escurece a periferia, como o campo visto através da boca aberta na laringoscopia. */
+  setScopeView(on: boolean): void {
+    this.vignette.classList.toggle('on', on);
   }
 
   /** Corte de câmera: a imagem escurece por um instante e reaparece (suaviza a troca de ponto de vista). */

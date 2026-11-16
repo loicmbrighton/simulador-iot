@@ -154,6 +154,13 @@ h2 { margin: 20px 0 10px; font-size: 14px; color: var(--muted); font-weight: 600
 .redflash.on { animation: redflash 0.9s ease-out; }
 @keyframes redflash { 0% { opacity: 0; } 12% { opacity: 1; } 30% { opacity: 0.25; } 48% { opacity: 0.9; } 100% { opacity: 0; } }
 
+/* Visão pela boca (laringoscopia) */
+.scopeview {
+  position: absolute; inset: 0; opacity: 0; transition: opacity 0.4s;
+  background: radial-gradient(ellipse 34vmax 30vmax at 50% 44%, transparent 55%, rgba(6, 2, 2, 0.88) 82%, rgba(4, 1, 1, 0.98) 100%);
+}
+.scopeview.on { opacity: 1; }
+
 /* Corte de câmera */
 .cutfade { position: absolute; inset: 0; background: #05080a; opacity: 0; }
 
@@ -184,7 +191,7 @@ h2 { margin: 20px 0 10px; font-size: 14px; color: var(--muted); font-weight: 600
 .wheel button:focus-visible { outline: 2px solid #ffffff; outline-offset: 2px; }
 
 @media (prefers-reduced-motion: reduce) {
-  .toast, .option, .handbox, .wheel-item { transition: none; }
+  .toast, .option, .handbox, .wheel-item, .scopeview { transition: none; }
   .redflash.on { animation: redflash-still 1.2s linear; }
   .vitals span.alarm { animation: none; }
   @keyframes redflash-still { 0%, 80% { opacity: 0.8; } 100% { opacity: 0; } }

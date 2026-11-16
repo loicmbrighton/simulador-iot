@@ -44,7 +44,7 @@ const EXT_LAMINA = 1.2;
  * Luzes da visão pela boca. A lâmpada da lâmina fica quase apagada (está a milímetros do aço e estouraria a
  * imagem); quem ilumina é uma luz no lugar dela, um pouco afastada.
  */
-const INTERNA = { luzCamera: 0.06, luzLamina: 0.00005, ambiente: 0.35 };
+const INTERNA = { luzCamera: 0.05, luzLamina: 0.00005, ambiente: 0.35 };
 /** Geometria da laringoscopia (metros). Ver `App.prepareSight`. */
 const VISAO = {
   /** A linha de visão passa esta distância abaixo da borda dos incisivos superiores. */
@@ -53,6 +53,8 @@ const VISAO = {
   miraEsofago: 0.62,
   /** Quanto a lâmina traciona a laringe para a frente: abre o espaço atrás das aritenoides (entrada do esôfago). */
   tracaoLaringe: 0.012,
+  /** Posição da entrada do esôfago na imagem, entre as aritenoides (0) e a parede posterior (1). */
+  esofagoEntre: 0.62,
   /** Ponta da lâmina (valécula): distância até a mira ao longo da linha de visão, afastamento anterior e para a esquerda. */
   pontaAteMira: 0.03,
   pontaAnterior: 0.022,
@@ -66,7 +68,7 @@ const VISAO = {
   /** Semilargura mínima do canal (a espátula tem 21 mm de largura). */
   canalLargura: 0.014,
   /** Faixa de transição nas laterais do canal (paredes formadas pela própria língua). */
-  canalBorda: 0.012,
+  canalBorda: 0.018,
   /** Espaço livre mantido atrás (posterior) da linha de visão: o palato mole e a úvula cedem até aqui. */
   folgaPalato: 0.014,
 };
@@ -130,7 +132,7 @@ export class App {
   debugView: { pos: Vector3; target: Vector3 } | null = null;
 
   private readonly clock = new Clock();
-  private readonly raycaster = new Raycaster();
+  readonly raycaster = new Raycaster();
   private readonly lean = new Vector3();
   private yaw = 0;
   private pitch = 0;
@@ -155,6 +157,8 @@ export class App {
    * Linha de visão da laringoscopia (mundo): da boca até um ponto entre a glote e a entrada do esôfago.
    * A lâmina corre junto a ela, pelo lado anterior, e a câmera da visão pela boca fica sobre ela.
    */
+  /** Onde a câmera da visão pela boca enxerga a entrada do esôfago (calculado ao entrar nela). */
+  private esophagusAt: Vector3 | null = null;
   private sight: { boca: Vector3; mira: Vector3; dir: Vector3; anterior: Vector3; ponta: Vector3; corda: Vector3; comprimento: number } | null = null;
   /** Luz da visão pela boca (faz o papel da lâmpada da lâmina, que fica a milímetros do aço). */
   private readonly innerLight = new PointLight(0xfff1d8, 0, 0.5, 1);
@@ -267,6 +271,7 @@ export class App {
     this.world.vitals.spo2 = VITALS.spo2;
     this.easy = estadoInicial();
     this.sight = null;
+    this.esophagusAt = null;
     this.mode = 'medico';
     this.cut = null;
     this.focus = 0;
@@ -784,7 +789,28 @@ export class App {
     this.hands.left.setVisible(false);
     this.updateView();
     this.snapHands();
-    this.ui.setCaption('Glote exposta. Escolha na roda o instrumento da mão direita · Esc: retirar o laringoscópio');
+    this.findEsophagus();
+    this.ui.setCaption('Glote em cima; entrada do esôfago embaixo, atrás das aritenoides. Escolha na roda o instrumento da mão direita · Esc: retirar o laringoscópio');
+  }
+
+  /**
+   * Acha, na imagem da visão pela boca, a entrada do esôfago: a faixa entre a face posterior das aritenoides
+   * e a parede posterior da hipofaringe. Lança dois raios da câmera (um rente às aritenoides, outro na parede)
+   * e mira entre os pontos atingidos.
+   */
+  private findEsophagus(): void {
+    const p = this.patient;
+    const air = p?.meshes['via_aerea'];
+    if (!p || !air) return;
+    const eye = this.view.position.clone();
+    const hit = (alvo: Vector3): Vector3 | null => {
+      this.raycaster.set(eye, alvo.clone().sub(eye).normalize());
+      return this.raycaster.intersectObject(air, false)[0]?.point ?? null;
+    };
+    const aritenoides = hit(p.airLandmark('esofago'));
+    const parede = hit(p.airLandmark('hipofaringePosterior'));
+    if (!aritenoides || !parede) return;
+    this.esophagusAt = hit(aritenoides.lerp(parede, VISAO.esofagoEntre)) ?? parede;
   }
 
   /** Sai da visão interna e desfaz a laringoscopia: a lâmina sai e a esquerda volta com o laringoscópio. */
@@ -1055,6 +1081,9 @@ export class App {
     }
     this.scene.environmentIntensity = inside ? INTERNA.ambiente : 0.45;
     this.patient?.setInsideView(inside && !this.debugView);
+    this.ui.setScopeView(inside && !this.debugView);
+    if (inside && this.sight && this.patient && this.esophagusAt) this.patient.placeEsophagus(this.esophagusAt, this.view.position, this.sight.anterior);
+    else if (this.patient && this.mode !== 'interna') this.patient.esophagusMark.visible = false;
     const scope = this.tools.find((t) => t.def.id === 'laringoscopio');
     if (scope?.light && scope.light.intensity > 0) scope.light.intensity = this.mode === 'interna' ? INTERNA.luzLamina : 0.35;
   }
