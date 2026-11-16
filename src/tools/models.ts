@@ -40,8 +40,14 @@ function tube(points: Vector3[], radius: number, mat: Material, segments = 48): 
 
 // ---------------------------------------------------------------- Laringoscópio (cabo + lâmina Macintosh 3)
 export function buildLaryngoscope(): ToolModel {
+  // Empunhado para uso, o cabo fica para cima e a lâmina embaixo (o modelo é construído com o cabo em -Y).
+  // O conteúdo é espelhado em X para que, nessa posição, a flange fique à esquerda do operador
+  // (é ela que rebate a língua para a esquerda) e o lado aberto, por onde passa o tubo, à direita.
+  const outer = new Group();
+  outer.name = 'laringoscopio';
   const g = new Group();
-  g.name = 'laringoscopio';
+  g.scale.x = -1;
+  outer.add(g);
 
   // Cabo serrilhado (pilhas dentro).
   g.add(mesh(new CylinderGeometry(0.0145, 0.0145, 0.125, 28), MAT.acoEscovado, new Vector3(0, -0.0075, 0)));
@@ -54,7 +60,7 @@ export function buildLaryngoscope(): ToolModel {
   // Encaixe (gancho) da lâmina.
   g.add(mesh(new BoxGeometry(0.024, 0.014, 0.03), MAT.aco, new Vector3(0, 0.061, 0.004)));
 
-  // Lâmina: perfil em "Z" invertido com flange vertical à esquerda (+X) que rebate a língua.
+  // Lâmina: perfil em "Z" invertido com flange vertical (em +X aqui; ver o espelhamento acima).
   const path = new CatmullRomCurve3([
     new Vector3(0, 0.066, 0.012), new Vector3(0, 0.072, 0.045), new Vector3(0, 0.071, 0.078),
     new Vector3(0, 0.064, 0.105), new Vector3(0, 0.053, 0.126), new Vector3(0, 0.040, 0.141),
@@ -86,7 +92,7 @@ export function buildLaryngoscope(): ToolModel {
   light.position.copy(bulbPos).add(new Vector3(0, -0.003, 0.004));
   g.add(light);
 
-  return { object: g, tip, light, lamp };
+  return { object: outer, tip, light, lamp };
 }
 
 // ---------------------------------------------------------------- Tubo orotraqueal 7,5 com fio-guia
@@ -219,4 +225,22 @@ export function buildYankauer(): ToolModel {
     0.0045, MAT.silicone, 48,
   ).mesh);
   return { object: g, tip: tipPos };
+}
+
+// ---------------------------------------------------------------- Coxim occipital (toalha dobrada)
+/** Dimensões do coxim: espessura (X local), comprimento (Y local, atravessado na palma) e largura (Z). */
+export const COXIM = { espessura: 0.07, comprimento: 0.28, largura: 0.19 };
+
+export function buildCoxim(): ToolModel {
+  const g = new Group();
+  g.name = 'coxim';
+  const mat = MAT.toalha;
+  // Três dobras empilhadas, apoiadas na palma (a palma fica em -X local).
+  const n = 3;
+  const e = COXIM.espessura / n;
+  for (let i = 0; i < n; i++) {
+    const fold = mesh(new BoxGeometry(e - 0.003, COXIM.comprimento - i * 0.006, COXIM.largura - i * 0.006), mat, new Vector3(0.034 + e * (i + 0.5), 0, 0.02));
+    g.add(fold);
+  }
+  return { object: g, tip: new Vector3(0.034 + COXIM.espessura / 2, 0, 0.02) };
 }

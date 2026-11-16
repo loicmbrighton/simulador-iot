@@ -6,7 +6,7 @@ describe('empunhadura', () => {
   it('a mão na pose pronta deixa a ferramenta exatamente na orientação "pronta", nas duas mãos', () => {
     for (const def of TOOL_DEFS) {
       for (const side of ['left', 'right'] as const) {
-        const world = readyHandQuat(def, side).multiply(gripQuat(side));
+        const world = readyHandQuat(def, side).multiply(gripQuat(side, def));
         const expected = new Quaternion().setFromEuler(def.pronta);
         expect(Math.abs(world.dot(expected))).toBeCloseTo(1, 6);
       }

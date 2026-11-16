@@ -20,8 +20,17 @@ export const HELP_LINES: [string, string][] = [
   ['Setas', 'Inclinar o corpo'],
   ['X', 'Recentralizar a visão'],
   ['H', 'Mostrar/ocultar ajuda'],
-  ['Esc', 'Pausa'],
+  ['Esc', 'Pausa (na visão da laringoscopia: retirar o laringoscópio e voltar)'],
 ];
+
+export interface WheelItem {
+  id: string;
+  nome: string;
+  /** Está na mão direita agora. */
+  naMao: boolean;
+  /** Não pode ser pego (está na outra mão ou já foi usado). */
+  indisponivel: boolean;
+}
 
 export class UI {
   private readonly menu = el('div', 'menu');
@@ -32,7 +41,15 @@ export class UI {
   private readonly handBoxes: Record<Side, HTMLDivElement> = { left: el('div', 'handbox left'), right: el('div', 'handbox right') };
   private readonly topLeft = el('div', 'topleft');
   private readonly topRight = el('div', 'topright', 'Tab = trocar de mão · H = ajuda');
+  private readonly checklist = el('div', 'checklist panel');
+  private readonly flashBox = el('div', 'redflash');
+  private readonly caption = el('div', 'caption');
+  private readonly wheel = el('div', 'wheel');
   private toastTimer = 0;
+  private checklistKey = '';
+  private wheelKey = '';
+  /** Clique num item da roda (null = soltar o que está na mão direita). */
+  onWheel: (id: string | null) => void = () => {};
   private readonly patientStatus = el('p', 'note status', 'Paciente: carregando…');
   choice: MenuChoice = { scenario: 'easy' };
   onStart: (c: MenuChoice) => void = () => {};
@@ -41,11 +58,17 @@ export class UI {
   constructor(private readonly root: HTMLElement) {
     this.buildMenu();
     this.toast.setAttribute('role', 'status');
-    this.hud.append(this.topLeft, this.topRight, this.handBoxes.left, this.handBoxes.right, this.help, this.toast, this.hint);
+    this.caption.setAttribute('role', 'status');
+    this.hud.append(
+      this.flashBox, this.topLeft, this.topRight, this.checklist, this.handBoxes.left, this.handBoxes.right, this.wheel,
+      this.caption, this.help, this.toast, this.hint,
+    );
     root.append(this.hud, this.menu);
     this.hud.hidden = true;
     this.help.hidden = true;
     this.hint.hidden = true;
+    this.caption.hidden = true;
+    this.wheel.hidden = true;
     this.renderHelp();
   }
 
@@ -119,11 +142,74 @@ export class UI {
     this.help.append(dl);
   }
 
-  flash(msg: string): void {
+  flash(msg: string, erro = false): void {
     this.toast.textContent = msg;
     this.toast.classList.add('show');
+    this.toast.classList.toggle('error', erro);
     window.clearTimeout(this.toastTimer);
-    this.toastTimer = window.setTimeout(() => this.toast.classList.remove('show'), 2600);
+    this.toastTimer = window.setTimeout(() => this.toast.classList.remove('show'), erro ? 4200 : 2600);
+  }
+
+  /** Erro de conduta: a tela pisca em vermelho e a mensagem aparece em destaque. */
+  redFlash(msg: string): void {
+    this.flashBox.classList.remove('on');
+    void this.flashBox.offsetWidth; // reinicia a animação
+    this.flashBox.classList.add('on');
+    this.flash(msg, true);
+  }
+
+  /** Legenda no rodapé (cortes de câmera). null esconde. */
+  setCaption(text: string | null): void {
+    this.caption.hidden = text === null;
+    if (text !== null) this.caption.textContent = text;
+  }
+
+  /** Colinha: sequência de passos, com os cumpridos marcados e o atual em destaque. */
+  setChecklist(passos: string[], atual: number, rodape: string | null): void {
+    const key = `${atual}|${rodape}`;
+    if (key === this.checklistKey) return;
+    this.checklistKey = key;
+    const ol = el('ol');
+    passos.forEach((texto, i) => {
+      const li = el('li', i < atual ? 'done' : i === atual ? 'current' : '');
+      if (i === atual) li.setAttribute('aria-current', 'step');
+      li.append(el('span', 'mark', i < atual ? '✓' : String(i + 1)), el('span', '', texto));
+      ol.append(li);
+    });
+    this.checklist.replaceChildren(el('h3', '', 'Sequência'), ol);
+    if (rodape) this.checklist.append(el('p', 'foot', rodape));
+  }
+
+  /** Roda de seleção de instrumentos da mão direita (visão da laringoscopia). null esconde. */
+  setWheel(itens: WheelItem[] | null): void {
+    this.wheel.hidden = itens === null;
+    if (itens === null) {
+      this.wheelKey = '';
+      return;
+    }
+    const key = itens.map((i) => `${i.id}${i.naMao ? '*' : ''}${i.indisponivel ? '-' : ''}`).join('|');
+    if (key === this.wheelKey) return;
+    this.wheelKey = key;
+    const R = 37; // raio em % do tamanho da roda
+    const nodes: HTMLElement[] = [];
+    itens.forEach((item, i) => {
+      const a = (i / itens.length) * Math.PI * 2 - Math.PI / 2;
+      const b = el('button', 'wheel-item', item.nome);
+      b.type = 'button';
+      b.disabled = item.indisponivel;
+      b.classList.toggle('held', item.naMao);
+      b.setAttribute('aria-pressed', String(item.naMao));
+      b.style.left = `${50 + R * Math.cos(a)}%`;
+      b.style.top = `${50 + R * Math.sin(a)}%`;
+      b.onclick = () => this.onWheel(item.id);
+      nodes.push(b);
+    });
+    const held = itens.some((i) => i.naMao);
+    const center = el('button', 'wheel-center', held ? 'Soltar' : 'Mão direita');
+    center.type = 'button';
+    center.disabled = !held;
+    center.onclick = () => this.onWheel(null);
+    this.wheel.replaceChildren(...nodes, center);
   }
 
   /** Dica ao lado do cursor (null esconde). `pointer` em coordenadas normalizadas (-1..1). */
@@ -141,10 +227,10 @@ export class UI {
     this.hint.style.transform = `translate(${Math.max(8, left)}px, ${Math.max(8, top)}px)`;
   }
 
-  updateHud(s: { scenario: ScenarioId; active: Side; elapsed: number; tools: Record<Side, string | null> }): void {
+  updateHud(s: { scenario: ScenarioId; active: Side; elapsed: number; erros: number; tools: Record<Side, string | null> }): void {
     const mm = Math.floor(s.elapsed / 60).toString().padStart(2, '0');
     const ss = Math.floor(s.elapsed % 60).toString().padStart(2, '0');
-    const top = `${SCENARIOS[s.scenario].nome} · ${mm}:${ss}`;
+    const top = `${SCENARIOS[s.scenario].nome} · ${mm}:${ss} · Erros: ${s.erros}`;
     if (this.topLeft.textContent !== top) this.topLeft.textContent = top;
     for (const side of ['left', 'right'] as Side[]) {
       const box = this.handBoxes[side];

@@ -1,9 +1,10 @@
 import {
-  Bone, BufferAttribute, DoubleSide, Group, Mesh, MeshStandardMaterial, PlaneGeometry, Quaternion,
-  SkinnedMesh, Vector3, BoxGeometry, type Material,
+  Bone, BufferAttribute, DoubleSide, Float32BufferAttribute, Group, Mesh, MeshStandardMaterial, PlaneGeometry,
+  Quaternion, SkinnedMesh, Vector3, BoxGeometry, type Material,
 } from 'three';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { MAT } from './materials';
+import { COXIM } from '../tools/models';
 
 /**
  * Paciente real (MakeHuman + via aérea), carregado de `paciente.json` (glTF com buffer embutido).
@@ -85,8 +86,34 @@ const MODEL_LANDMARKS = {
   fronte: new Vector3(0, 1.69, 0.125),
   cricoide: new Vector3(0, 1.455, 0.083),
   nariz: new Vector3(0, 1.605, 0.18),
+  labioSuperior: new Vector3(0, 1.574, 0.157),
+  labioInferior: new Vector3(0, 1.554, 0.156),
 };
 export type LandmarkName = keyof typeof MODEL_LANDMARKS;
+
+/** Pontos da via aérea no espaço do modelo (ver marcos em tools/anatomia/gerar_via_aerea.py). */
+const AIR_LANDMARKS = {
+  valecula: new Vector3(0, 1.501, 0.078),
+  comissuraAnterior: new Vector3(0, 1.4765, 0.0715),
+  glotePosterior: new Vector3(0, 1.4765, 0.0505),
+  traqueiaAnterior: new Vector3(0, 1.446, 0.072),
+};
+export type AirLandmarkName = keyof typeof AIR_LANDMARKS;
+
+/** Posição olfativa: flexão do pescoço sobre o coxim (graus) e extensão da cabeça. */
+const SNIFF = { head: -20.8, neck03: -5.2, neck02: 4.4, neck01: 9.1 };
+const NECK_BONES = ['head', 'neck03', 'neck02', 'neck01'] as const;
+
+export interface PatientPose {
+  /** Abertura da mandíbula (graus). */
+  jaw: number;
+  /** Flexão do pescoço: 0 = cabeça no colchão (neutra), 1 = sobre o coxim. Pode passar de 1 (cabeça erguida). */
+  flex: number;
+  /** Extensão da cabeça: 0 = neutra, 1 = posição olfativa. */
+  ext: number;
+  /** Língua rebatida para a esquerda pela lâmina (0–1). */
+  tongue: number;
+}
 
 export class Patient {
   readonly root = new Group();
@@ -95,9 +122,18 @@ export class Patient {
   readonly body: SkinnedMesh;
   readonly meshes: Record<string, Mesh> = {};
   readonly towel: Mesh;
+  /** Posição final da toalha sob o occipício (a animação desliza a toalha até aqui). */
+  readonly towelRest = new Vector3();
   sheet: Mesh | null = null;
+  readonly pose: PatientPose = { jaw: 0, flex: 0, ext: 0, tongue: 0 };
+  private readonly air: SkinnedMesh | null;
   private readonly rest: Record<string, Quaternion> = {};
   private readonly landmarkVertex = new Map<LandmarkName, number>();
+  private readonly airVertex = new Map<AirLandmarkName, number>();
+  /** Ângulos (graus) dos ossos do pescoço na posição neutra, com a cabeça apoiada no colchão. */
+  private neutral: Record<(typeof NECK_BONES)[number], number> = { head: 0, neck03: 0, neck02: 0, neck01: 0 };
+  private headVerts: number[] = [];
+  private readonly headShapes = { neutral: { c: new Vector3(), r: new Vector3() }, sniff: { c: new Vector3(), r: new Vector3() } };
   /** Elipsoide da cabeça (pose atual), para as colisões das mãos. */
   readonly headCenter = new Vector3();
   readonly headRadii = new Vector3();
@@ -139,33 +175,173 @@ export class Patient {
     });
     if (!body) throw new Error('malha do corpo não encontrada');
     this.body = body;
+    this.air = (this.meshes['via_aerea'] as SkinnedMesh | undefined) ?? null;
     this.findLandmarkVertices();
+    this.anchorTrachea();
+    this.buildTongueMorph();
 
-    // Coxim: toalha dobrada sob o occipício (altura ajustada em layout()).
-    this.towel = new Mesh(new BoxGeometry(0.3, 1, 0.2), towelMaterial());
+    // Coxim: toalha dobrada sob o occipício (altura ajustada em layout()); só aparece quando é colocada.
+    this.towel = new Mesh(new BoxGeometry(COXIM.comprimento, 1, COXIM.largura), MAT.toalha);
     this.towel.castShadow = true;
     this.towel.receiveShadow = true;
     this.root.add(this.towel);
 
-    this.setPose({ jaw: 0, ext: 26, arms: 1 });
+    for (const side of ['L', 'R'] as const) this.adductArm(side, 1);
+    // Mede tudo na posição olfativa (altura da toalha, lençol) e depois acha a posição neutra.
+    this.applyPose({ jaw: 0, flex: 1, ext: 1, tongue: 0 });
+    this.layout();
+    this.findNeutral();
+    this.reset();
   }
 
-  /** Pose: abertura da mandíbula (graus), extensão da cabeça / posição olfativa (graus), braços aduzidos (0–1). */
-  setPose(p: { jaw: number; ext: number; arms: number }): void {
-    this.rot('jaw', p.jaw);
-    this.rot('head', -p.ext * 0.8);
-    this.rot('neck03', -p.ext * 0.2);
-    this.rot('neck02', p.ext * 0.17);
-    this.rot('neck01', p.ext * 0.35);
-    // Braços: da pose em "A" do MakeHuman para junto do corpo, mão ao lado da coxa.
-    for (const side of ['L', 'R'] as const) this.adductArm(side, p.arms);
-    this.layout();
+  /** Volta ao início do cenário: cabeça neutra no colchão, boca fechada, sem coxim. */
+  reset(): void {
+    this.applyPose({ jaw: 0, flex: 0, ext: 0, tongue: 0 });
+    this.towel.visible = false;
+    this.towel.position.copy(this.towelRest);
+  }
+
+  /** Aplica a pose (só ossos e morph: barato, pode ser chamado a cada quadro). */
+  applyPose(p: Partial<PatientPose>): void {
+    Object.assign(this.pose, p);
+    const { jaw, flex, ext, tongue } = this.pose;
+    this.rot('jaw', jaw);
+    for (const b of NECK_BONES) {
+      const k = b === 'head' || b === 'neck03' ? ext : flex;
+      this.rot(b, this.neutral[b] + (SNIFF[b] - this.neutral[b]) * k);
+    }
+    if (this.air) {
+      if (this.air.morphTargetInfluences) this.air.morphTargetInfluences[0] = tongue;
+      // A via aérea só é vista pela boca, com a cabeça já posicionada. Fora disso fica oculta: nas poses
+      // extremas do pescoço ela não acompanha a pele e apareceria por fora.
+      this.air.visible = ext > 0.95 && Math.abs(flex - 1) < 0.05;
+    }
+    // Elipsoide da cabeça (para o cursor): interpola entre as duas posições medidas.
+    const k = Math.min(1, Math.max(0, (flex + ext) / 2));
+    this.headCenter.lerpVectors(this.headShapes.neutral.c, this.headShapes.sniff.c, k);
+    this.headRadii.lerpVectors(this.headShapes.neutral.r, this.headShapes.sniff.r, k);
+    this.root.updateMatrixWorld(true);
   }
 
   private rot(name: string, deg: number): void {
     const b = this.bones[name];
     if (!b) return;
     b.quaternion.copy(this.rest[name]).multiply(new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), (deg * Math.PI) / 180));
+  }
+
+  /** Ponto mais baixo da cabeça (occipício) na pose atual, no mundo. */
+  occiput(out = new Vector3()): Vector3 {
+    const v = new Vector3();
+    out.set(0, Infinity, 0);
+    this.root.updateMatrixWorld(true);
+    this.body.skeleton.update();
+    for (const i of this.headVerts) {
+      this.body.getVertexPosition(i, v).applyMatrix4(this.body.matrixWorld);
+      if (v.y < out.y) out.copy(v);
+    }
+    return out;
+  }
+
+  /**
+   * Posição neutra: sem coxim a cabeça repousa no colchão. Procura (bisseção) a extensão do pescoço que
+   * encosta o occipício no colchão, com a cabeça compensando para a face continuar voltada para cima.
+   */
+  private findNeutral(): void {
+    const set = (d: number) => {
+      this.neutral = { head: 0.35 * d, neck03: 0, neck02: -0.4 * d, neck01: -0.6 * d };
+      this.applyPose({ flex: 0, ext: 0 });
+      return this.occiput().y - (this.place.mattressTop + 0.004);
+    };
+    let lo = 0, hi = 45;
+    if (set(lo) > 0) {
+      for (let i = 0; i < 12; i++) {
+        const mid = (lo + hi) / 2;
+        if (set(mid) > 0) lo = mid; else hi = mid;
+      }
+      set((lo + hi) / 2);
+    }
+    this.measureHead(this.headShapes.neutral);
+  }
+
+  private measureHead(out: { c: Vector3; r: Vector3 }): void {
+    const min = new Vector3(Infinity, Infinity, Infinity);
+    const max = new Vector3(-Infinity, -Infinity, -Infinity);
+    const v = new Vector3();
+    this.root.updateMatrixWorld(true);
+    this.body.skeleton.update();
+    for (const i of this.headVerts) {
+      this.body.getVertexPosition(i, v).applyMatrix4(this.body.matrixWorld);
+      min.min(v);
+      max.max(v);
+    }
+    out.c.copy(min).add(max).multiplyScalar(0.5);
+    out.r.copy(max).sub(min).multiplyScalar(0.47);
+  }
+
+  /**
+   * A traqueia intratorácica não acompanha o pescoço: abaixo da cricoide os pesos passam, aos poucos,
+   * para o osso pai do pescoço. Sem isso, ao estender o pescoço a traqueia sairia pela frente do tórax.
+   */
+  private anchorTrachea(): void {
+    const air = this.air;
+    const parent = this.bones['neck01']?.parent as Bone | undefined;
+    if (!air || !parent) return;
+    const bone = air.skeleton.bones.indexOf(parent);
+    if (bone < 0) return;
+    const pos = air.geometry.getAttribute('position') as BufferAttribute;
+    const idx = air.geometry.getAttribute('skinIndex') as BufferAttribute;
+    const wgt = air.geometry.getAttribute('skinWeight') as BufferAttribute;
+    for (let i = 0; i < pos.count; i++) {
+      const t = Math.min(1, Math.max(0, (1.45 - pos.getY(i)) / 0.045)); // 0 na cricoide, 1 a 4,5 cm abaixo
+      if (t <= 0) continue;
+      const k = t * t * (3 - 2 * t);
+      // Reduz os pesos atuais e põe o restante no osso do tórax, no lugar da menor influência.
+      let min = 0;
+      for (let c = 0; c < 4; c++) {
+        wgt.setComponent(i, c, wgt.getComponent(i, c) * (1 - k));
+        if (wgt.getComponent(i, c) < wgt.getComponent(i, min)) min = c;
+      }
+      idx.setComponent(i, min, bone);
+      wgt.setComponent(i, min, k);
+      let sum = 0;
+      for (let c = 0; c < 4; c++) sum += wgt.getComponent(i, c);
+      for (let c = 0; c < 4; c++) wgt.setComponent(i, c, wgt.getComponent(i, c) / sum);
+    }
+    idx.needsUpdate = true;
+    wgt.needsUpdate = true;
+  }
+
+  /**
+   * Morph da língua rebatida: os vértices da língua (cor de região) vão para a esquerda do paciente e
+   * afundam em direção ao assoalho da boca, abrindo o canal por onde a lâmina passa.
+   */
+  private buildTongueMorph(): void {
+    const air = this.air;
+    if (!air) return;
+    const pos = air.geometry.getAttribute('position') as BufferAttribute;
+    const col = air.geometry.getAttribute('color') as BufferAttribute | undefined;
+    if (!col) return;
+    const delta = new Float32Array(pos.count * 3);
+    const smooth = (a: number, b: number, x: number) => {
+      const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+      return t * t * (3 - 2 * t);
+    };
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      if (y < 1.5) continue; // abaixo disso a mesma cor é das aritenoides
+      const d = Math.hypot(col.getX(i) - 0.74, col.getY(i) - 0.38, col.getZ(i) - 0.36);
+      const w = Math.min(1, Math.max(0, 1 - d / 0.1));
+      if (w <= 0) continue;
+      const lateral = 1 - smooth(-0.004, 0.026, x); // lado direito e centro são empurrados; a borda esquerda quase não
+      const base = 1 - smooth(0.075, 0.1, z); // 1 na base da língua (voltada para a faringe)
+      delta[i * 3] = w * lateral * 0.011;
+      delta[i * 3 + 1] = -w * lateral * (0.007 - 0.004 * base);
+      delta[i * 3 + 2] = w * lateral * base * 0.006;
+    }
+    air.geometry.morphAttributes.position = [new Float32BufferAttribute(delta, 3)];
+    air.geometry.morphTargetsRelative = true;
+    air.updateMorphTargets();
+    (air.material as MeshStandardMaterial).needsUpdate = true;
   }
 
   private armSolution: Record<string, Quaternion> = {};
@@ -200,7 +376,7 @@ export class Patient {
     upper.quaternion.copy(this.rest[upper.name]).slerp(this.rest[upper.name].clone().multiply(this.armSolution[side]), amount);
   }
 
-  /** Posiciona o corpo na maca, a toalha sob o occipício e recalcula colisões/lençol. */
+  /** Posiciona o corpo na maca e mede a toalha sob o occipício e o lençol (pose atual = olfativa). */
   private layout(): void {
     // Altura: costas no colchão. Usa a pose atual (vértices deformados).
     this.root.position.set(0, 0, 0);
@@ -231,18 +407,13 @@ export class Patient {
     }
     const h = Math.max(0.01, occY - 0.002 - this.place.mattressTop);
     this.towel.scale.set(1, h, 1);
-    this.towel.position.set(0, this.place.mattressTop + h / 2, occZ + 0.01);
+    this.towelRest.set(0, this.place.mattressTop + h / 2, occZ + 0.01);
+    this.towel.position.copy(this.towelRest);
 
-    // Elipsoide da cabeça: vértices acima do pescoço (no modelo).
-    const head = this.verticesAbove(pts, 1.53);
-    const min = new Vector3(Infinity, Infinity, Infinity);
-    const max = new Vector3(-Infinity, -Infinity, -Infinity);
-    for (const v of head) {
-      min.min(v);
-      max.max(v);
-    }
-    this.headCenter.copy(min).add(max).multiplyScalar(0.5);
-    this.headRadii.copy(max).sub(min).multiplyScalar(0.47);
+    // Vértices da cabeça (acima do pescoço, no modelo) e elipsoide na posição olfativa.
+    this.headVerts = [];
+    for (let i = 0; i < pos.count; i++) if (pos.getY(i) > 1.53) this.headVerts.push(i);
+    this.measureHead(this.headShapes.sniff);
     this.buildSheet(pts);
   }
 
@@ -262,13 +433,6 @@ export class Patient {
     return out;
   }
 
-  private verticesAbove(pts: Float32Array, modelY: number): Vector3[] {
-    const pos = this.body.geometry.getAttribute('position') as BufferAttribute;
-    const res: Vector3[] = [];
-    for (let i = 0; i < pos.count; i++) if (pos.getY(i) > modelY) res.push(new Vector3(pts[i * 3], pts[i * 3 + 1], pts[i * 3 + 2]));
-    return res;
-  }
-
   private findLandmarkVertices(): void {
     const pos = this.body.geometry.getAttribute('position') as BufferAttribute;
     const v = new Vector3();
@@ -284,6 +448,40 @@ export class Patient {
       }
       this.landmarkVertex.set(name, best);
     }
+    if (!this.air) return;
+    const apos = this.air.geometry.getAttribute('position') as BufferAttribute;
+    for (const [name, p] of Object.entries(AIR_LANDMARKS) as [AirLandmarkName, Vector3][]) {
+      let best = 0;
+      let bestD = Infinity;
+      for (let i = 0; i < apos.count; i++) {
+        const d = v.fromBufferAttribute(apos, i).distanceToSquared(p);
+        if (d < bestD) {
+          bestD = d;
+          best = i;
+        }
+      }
+      this.airVertex.set(name, best);
+    }
+  }
+
+  /** Posição atual (mundo) de um ponto da via aérea. */
+  airLandmark(name: AirLandmarkName, out = new Vector3()): Vector3 {
+    const air = this.air;
+    const i = this.airVertex.get(name);
+    if (!air || i === undefined) return out.copy(this.landmark('boca'));
+    air.getVertexPosition(i, out);
+    return out.applyMatrix4(air.matrixWorld);
+  }
+
+  /** Referencial da glote no mundo: centro entre as pregas vocais, direção cranial (eixo da laringe) e anterior. */
+  glottisFrame(): { centro: Vector3; cranial: Vector3; anterior: Vector3 } {
+    const ant = this.airLandmark('comissuraAnterior');
+    const post = this.airLandmark('glotePosterior');
+    const traq = this.airLandmark('traqueiaAnterior');
+    const anterior = ant.clone().sub(post).normalize();
+    const cranial = ant.clone().sub(traq);
+    cranial.addScaledVector(anterior, -cranial.dot(anterior)).normalize();
+    return { centro: ant.add(post).multiplyScalar(0.5), cranial, anterior };
   }
 
   /** Posição atual (mundo) de um ponto anatômico. */
@@ -368,10 +566,6 @@ export class Patient {
     if (ix < 0 || ix >= m.nx || iz < 0 || iz >= m.nz) return -Infinity;
     return m.h[iz * m.nx + ix];
   }
-}
-
-function towelMaterial(): Material {
-  return new MeshStandardMaterial({ color: 0xe9ecef, roughness: 0.95 });
 }
 
 function sheetMaterial(): Material {

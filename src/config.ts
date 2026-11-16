@@ -79,3 +79,26 @@ export const LOOK = {
   pitchMax: 0.7,
   lean: 0.25, // m/s
 };
+
+/**
+ * Sinais vitais do Modo Easy. Valores iniciais e o quanto cada erro de conduta piora o paciente.
+ * São números didáticos, não um modelo fisiológico: ajustar à vontade (validação clínica do usuário).
+ */
+export const VITALS = {
+  fc: 78,
+  spo2: 98,
+  /** Efeito de cada erro. */
+  erro: { fc: 9, spo2: -4 },
+  limite: { fc: 165, spo2: 60 },
+  /** A partir daqui o valor pisca em vermelho no monitor. */
+  alarme: { fc: 110, spo2: 90 },
+};
+
+/** Câmeras de corte (posições no mundo). */
+export const SHOTS = {
+  /** Vista lateral da cabeça e do pescoço, para mostrar a posição olfativa. */
+  lateral: { pos: new Vector3(0.98, 1.17, -0.06), target: new Vector3(0, 1.06, -0.01), fov: 40 },
+  /** Visão interna: distância da câmera até a glote ao longo do eixo da laringe, e campo de visão. */
+  interna: { distancia: 0.062, posterior: 0.004, fov: 68 },
+  medico: { fov: 58 },
+};

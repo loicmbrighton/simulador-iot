@@ -12,6 +12,7 @@ export const MAT = {
   labio: new MeshStandardMaterial({ color: 0xb87670, roughness: 0.45 }),
   boca: new MeshStandardMaterial({ color: 0x3a1515, roughness: 0.7 }),
   lencol: new MeshStandardMaterial({ color: 0xdfe6ea, roughness: 0.92 }),
+  toalha: new MeshStandardMaterial({ color: 0x8fb3d9, roughness: 0.95 }),
   avental: new MeshStandardMaterial({ color: 0x9fb9cf, roughness: 0.9 }),
   colchao: new MeshStandardMaterial({ color: 0x2f4255, roughness: 0.7 }),
   plasticoBranco: new MeshStandardMaterial({ color: 0xf2f2ef, roughness: 0.35 }),

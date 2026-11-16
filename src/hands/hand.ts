@@ -126,6 +126,14 @@ export class Hand {
     this.root.quaternion.copy(quat);
   }
 
+  /** Mostra ou esconde a mão e o braço. O instrumento empunhado continua visível. */
+  setVisible(v: boolean): void {
+    this.model.visible = v;
+    this.upper.visible = v;
+    this.fore.visible = v;
+    this.elbowBall.visible = v;
+  }
+
   /** Camada de renderização: 1 = camada FPS (por cima da cena), 0 = mundo (com oclusão). Luzes valem nas duas. */
   setLayer(layer: number): void {
     for (const o of [this.root, this.upper, this.fore, this.elbowBall]) {

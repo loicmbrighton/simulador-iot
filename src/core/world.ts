@@ -3,7 +3,7 @@ import {
   Group, HemisphereLight, Mesh, MeshStandardMaterial, PlaneGeometry, SphereGeometry, SpotLight, SRGBColorSpace,
   TorusGeometry, Vector3, ConeGeometry, Object3D,
 } from 'three';
-import type { ScenarioInfo } from '../config';
+import { VITALS, type ScenarioInfo } from '../config';
 import type { Patient } from './patient';
 import { TRAY_SIZE, TRAY_TOP } from '../tools/tools';
 import { MAT } from './materials';
@@ -32,6 +32,8 @@ export class World {
     fronte: new Vector3(0, HEAD_C.y + 0.088, -0.045),
     cricoide: new Vector3(0, 1.05, 0.165),
   };
+  /** Sinais vitais mostrados no monitor (pioram a cada erro de conduta). */
+  readonly vitals = { fc: VITALS.fc, spo2: VITALS.spo2 };
   /** Paciente real (carregado depois); enquanto isso o manequim aparece. */
   patient: Patient | null = null;
   private mannequin: Group | null = null;
@@ -60,8 +62,15 @@ export class World {
     this.patient = p;
     this.group.add(p.root);
     if (this.mannequin) this.mannequin.visible = false;
-    const up = (v: Vector3, d: number) => v.clone().add(new Vector3(0, d, 0));
-    this.landmarks.boca.copy(up(p.landmark('boca'), -0.004));
+    this.refreshLandmarks();
+  }
+
+  /** Atualiza os pontos de referência para a pose atual do paciente (cabeça e boca mudam de lugar). */
+  refreshLandmarks(): void {
+    const p = this.patient;
+    if (!p) return;
+    // Boca: entre os lábios (acompanha a abertura).
+    this.landmarks.boca.copy(p.landmark('labioSuperior')).add(p.landmark('labioInferior')).multiplyScalar(0.5);
     this.landmarks.comissuraDireita.copy(p.landmark('comissuraDireita'));
     this.landmarks.comissuraEsquerda.copy(p.landmark('comissuraEsquerda'));
     this.landmarks.mento.copy(p.landmark('mento'));
@@ -224,12 +233,14 @@ export class World {
       }
       c.stroke();
     };
+    const { fc, spo2 } = this.vitals;
+    const T = 60 / fc / 1.3; // período do batimento na escala de tempo do traçado
     const beat = (s: number) => {
-      const ph = ((s % 0.77) + 0.77) % 0.77 / 0.77;
+      const ph = ((s % T) + T) % T / T;
       return Math.exp(-((ph - 0.3) ** 2) / 0.0006) * 1 - Math.exp(-((ph - 0.33) ** 2) / 0.0004) * 0.35 + Math.exp(-((ph - 0.55) ** 2) / 0.004) * 0.18;
     };
     const pleth = (s: number) => {
-      const ph = ((s % 0.77) + 0.77) % 0.77 / 0.77;
+      const ph = ((s % T) + T) % T / T;
       return Math.sin(Math.PI * Math.min(1, ph * 2.2)) * (ph < 0.45 ? 1 : 0.6) + (ph > 0.45 ? Math.sin((ph - 0.45) * 8) * 0.12 : 0);
     };
     trace(90, 55, '#3cff7a', beat);
@@ -240,10 +251,12 @@ export class World {
     c.lineTo(340, 320);
     c.stroke();
     c.font = 'bold 44px sans-serif';
-    c.fillStyle = '#3cff7a';
-    c.fillText('78', 380, 95);
-    c.fillStyle = '#4fd8ff';
-    c.fillText('98', 380, 210);
+    // Valores fora da faixa piscam em vermelho (alarme).
+    const blink = Math.floor(t * 3) % 2 === 0;
+    c.fillStyle = fc >= VITALS.alarme.fc && blink ? '#ff5a4d' : '#3cff7a';
+    c.fillText(String(Math.round(fc)), 380, 95);
+    c.fillStyle = spo2 <= VITALS.alarme.spo2 && blink ? '#ff5a4d' : '#4fd8ff';
+    c.fillText(String(Math.round(spo2)), 380, 210);
     c.fillStyle = '#ffe14d';
     c.fillText('--', 380, 325);
     c.font = '18px sans-serif';
