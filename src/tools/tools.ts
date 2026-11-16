@@ -156,7 +156,7 @@ export class Tool {
   setLight(on: boolean): void {
     if (!this.light) return;
     this.light.intensity = on ? 0.35 : 0;
-    if (this.lamp) (this.lamp.material as MeshStandardMaterial).emissiveIntensity = on ? 2.5 : 0;
+    if (this.lamp) (this.lamp.material as MeshStandardMaterial).emissiveIntensity = on ? 1.2 : 0;
   }
 
   tipWorld(out = new Vector3()): Vector3 {

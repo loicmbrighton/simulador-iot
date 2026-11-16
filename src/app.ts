@@ -44,23 +44,25 @@ const EXT_LAMINA = 1.2;
  * Luzes da visão pela boca. A lâmpada da lâmina fica quase apagada (está a milímetros do aço e estouraria a
  * imagem); quem ilumina é uma luz no lugar dela, um pouco afastada.
  */
-const INTERNA = { luzCamera: 0.075, luzLamina: 0.00005, ambiente: 0.3 };
+const INTERNA = { luzCamera: 0.06, luzLamina: 0.00005, ambiente: 0.35 };
 /** Geometria da laringoscopia (metros). Ver `App.prepareSight`. */
 const VISAO = {
   /** A linha de visão passa esta distância abaixo da borda dos incisivos superiores. */
   sobIncisivos: 0.004,
   /** 0 = mira na glote, 1 = mira na parede posterior da hipofaringe (entrada do esôfago). */
-  miraEsofago: 0.5,
+  miraEsofago: 0.62,
+  /** Quanto a lâmina traciona a laringe para a frente: abre o espaço atrás das aritenoides (entrada do esôfago). */
+  tracaoLaringe: 0.012,
   /** Ponta da lâmina (valécula): distância até a mira ao longo da linha de visão, afastamento anterior e para a esquerda. */
   pontaAteMira: 0.03,
-  pontaAnterior: 0.0115,
+  pontaAnterior: 0.022,
   laminaEsquerda: 0.004,
   /** Quanto a corda da lâmina se inclina para anterior em direção à boca (tangente do ângulo). */
-  inclinacaoLamina: 0.21,
+  inclinacaoLamina: 0.12,
   /** O tecido comprimido fica esta distância além da lâmina. */
   folgaLamina: 0.002,
   /** Perto da boca a lâmina se afasta muito da linha de visão: o canal não a acompanha além deste limite. */
-  tetoMax: 0.02,
+  tetoMax: 0.03,
   /** Semilargura mínima do canal (a espátula tem 21 mm de largura). */
   canalLargura: 0.014,
   /** Faixa de transição nas laterais do canal (paredes formadas pela própria língua). */
@@ -648,7 +650,10 @@ export class App {
     const ext = p.pose.ext;
     p.applyPose({ jaw: JAW_LAMINA, ext: EXT_LAMINA, tongue: 0 });
     const g = p.glottisFrame();
-    const mira = g.centro.clone().lerp(p.airLandmark('hipofaringePosterior'), VISAO.miraEsofago);
+    // A lâmina traciona a laringe para a frente: a mira fica entre a glote (já deslocada) e a parede
+    // posterior da hipofaringe, para a glote e a entrada do esôfago aparecerem na mesma imagem.
+    const glote = g.centro.clone().addScaledVector(g.anterior, VISAO.tracaoLaringe);
+    const mira = glote.lerp(p.airLandmark('hipofaringePosterior'), VISAO.miraEsofago);
     // Começa rente à borda dos incisivos superiores (um pouco para o lado da língua).
     const boca = p.incisor('upper');
     const ant0 = g.anterior.clone().addScaledVector(mira.clone().sub(boca).normalize(), -g.anterior.dot(mira.clone().sub(boca).normalize())).normalize();
@@ -683,7 +688,9 @@ export class App {
     // comprimidas contra a lâmina (sempre para anterior: a língua é uma folha contínua e precisa passar
     // inteira para o mesmo lado). O palato mole e a úvula cedem para posterior.
     // (A laringe em si é protegida pelos pesos do paciente; aqui só se limita o início, junto aos dentes.)
+    const tracao = g.anterior.clone().multiplyScalar(VISAO.tracaoLaringe);
     p.deformTissue((P, tipo) => {
+      if (tipo === 'laringe') return tracao.clone();
       const rel = P.clone().sub(boca);
       const s = rel.dot(dir);
       const ends = smooth(0, 0.02, s) * (1 - smooth(comprimento, comprimento + 0.01, s));
@@ -1043,9 +1050,11 @@ export class App {
     this.innerLight.intensity = inside ? INTERNA.luzCamera : 0;
     if (inside && this.sight) {
       const st = this.sight;
-      this.innerLight.position.copy(st.mira).lerp(st.boca, SHOTS.interna.recuo + 0.06).addScaledVector(st.anterior, -SHOTS.interna.posterior);
+      // Um pouco acima e à esquerda do olho (lado da lâmpada da lâmina): o brilho não volta direto para a câmera.
+      this.innerLight.position.copy(st.mira).lerp(st.boca, SHOTS.interna.recuo + 0.04).addScaledVector(st.anterior, 0.012).addScaledVector(X, 0.012);
     }
     this.scene.environmentIntensity = inside ? INTERNA.ambiente : 0.45;
+    this.patient?.setInsideView(inside && !this.debugView);
     const scope = this.tools.find((t) => t.def.id === 'laringoscopio');
     if (scope?.light && scope.light.intensity > 0) scope.light.intensity = this.mode === 'interna' ? INTERNA.luzLamina : 0.35;
   }

@@ -102,11 +102,11 @@ export const VITALS = {
 /** Câmeras de corte (posições no mundo). */
 export const SHOTS = {
   /** Vista lateral da cabeça e do pescoço, para mostrar a posição olfativa. */
-  lateral: { pos: new Vector3(0.98, 1.17, 0.06), target: new Vector3(0, 1.07, 0.1), fov: 35 },
+  lateral: { pos: new Vector3(0.98, 1.17, -0.1), target: new Vector3(0, 1.07, 0.06), fov: 35 },
   /**
    * Visão pela boca (laringoscopia): a câmera fica sobre a linha boca → laringe. `recuo` = 0 na laringe,
    * 1 nos lábios; `direita`/`posterior` afastam a câmera da lâmina (metros).
    */
-  interna: { recuo: 0.6, direita: 0.004, posterior: 0.002, fov: 42 },
+  interna: { recuo: 0.85, direita: 0.004, posterior: 0.006, fov: 33 },
   medico: { fov: 58 },
 };

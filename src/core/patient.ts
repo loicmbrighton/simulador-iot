@@ -163,7 +163,7 @@ export class Patient {
         const mat = m.material as MeshStandardMaterial;
         if (m.name === 'via_aerea') {
           mat.vertexColors = true;
-          mat.roughness = 0.32;
+          mat.roughness = 0.42;
           mat.metalness = 0;
           mat.side = DoubleSide;
           m.castShadow = false;
@@ -180,6 +180,7 @@ export class Patient {
     this.body = body;
     this.air = (this.meshes['via_aerea'] as SkinnedMesh | undefined) ?? null;
     this.shadeEsophagus();
+    this.trimMouthFloor();
     this.findLandmarkVertices();
     this.anchorTrachea();
     this.buildTongueMorph();
@@ -216,6 +217,8 @@ export class Patient {
     }
     if (this.air) {
       if (this.air.morphTargetInfluences) this.air.morphTargetInfluences[0] = tongue;
+      const index = tongue > 0.05 ? this.indexAberto : this.indexFechado;
+      if (index && this.air.geometry.index !== index) this.air.geometry.setIndex(index);
       // A via aérea só é vista pela boca, com a cabeça já posicionada. Fora disso fica oculta: nas poses
       // extremas do pescoço ela não acompanha a pele e apareceria por fora.
       this.air.visible = ext > 0.95 && Math.abs(flex - 1) < 0.05;
@@ -304,6 +307,25 @@ export class Patient {
   }
 
   /**
+   * A malha de dentes do MakeHuman traz, entre as arcadas inferiores, uma placa de "assoalho da boca". Ela é
+   * rígida e fica exatamente onde a língua é comprimida na laringoscopia, tapando a linha de visão. Como a
+   * língua da via aérea já cobre essa região, a placa é removida (só os triângulos entre as arcadas).
+   */
+  private trimMouthFloor(): void {
+    const teeth = this.meshes['dentes'];
+    const index = teeth?.geometry.index;
+    if (!teeth || !index) return;
+    const pos = teeth.geometry.getAttribute('position') as BufferAttribute;
+    const dentro = (i: number) => pos.getZ(i) < 0.128 && Math.abs(pos.getX(i)) < 0.018 && pos.getY(i) < 1.562;
+    const src = index.array;
+    const keep: number[] = [];
+    for (let t = 0; t < src.length; t += 3) {
+      if (!(dentro(src[t]) && dentro(src[t + 1]) && dentro(src[t + 2]))) keep.push(src[t], src[t + 1], src[t + 2]);
+    }
+    teeth.geometry.setIndex(keep);
+  }
+
+  /**
    * Escurece a mucosa ao descer pelo funil atrás das aritenoides (entrada do esôfago), como a malha já faz
    * com a traqueia. Sem isso a entrada do esôfago, colapsada, não se lê como uma abertura na laringoscopia.
    */
@@ -319,9 +341,9 @@ export class Patient {
     for (let i = 0; i < pos.count; i++) {
       const y = pos.getY(i), z = pos.getZ(i);
       // Atrás da face posterior das aritenoides (z < 0,047), da altura delas (y ≈ 1,488) para baixo.
-      const k = 0.88 * (1 - smooth(1.466, 1.486, y)) * (1 - smooth(0.0465, 0.0495, z)) * smooth(1.42, 1.435, y);
+      const k = 0.96 * (1 - smooth(1.47, 1.492, y)) * (1 - smooth(0.0465, 0.0495, z)) * smooth(1.42, 1.435, y);
       if (k <= 0) continue;
-      col.setXYZ(i, col.getX(i) * (1 - k) + 0.1 * k, col.getY(i) * (1 - k) + 0.02 * k, col.getZ(i) * (1 - k) + 0.02 * k);
+      col.setXYZ(i, col.getX(i) * (1 - k) + 0.05 * k, col.getY(i) * (1 - k) + 0.01 * k, col.getZ(i) * (1 - k) + 0.01 * k);
     }
     col.needsUpdate = true;
   }
@@ -363,6 +385,8 @@ export class Patient {
   private tissue: Float32Array = new Float32Array(0);
   /** Peso por vértice: palato mole, úvula e pilares (cedem para posterior). */
   private palate: Float32Array = new Float32Array(0);
+  /** Peso por vértice: bloco da laringe (tracionado para a frente pela lâmina; soma-se aos outros). */
+  private larynx: Float32Array = new Float32Array(0);
 
   /**
    * Prepara o morph da laringoscopia (um alvo, vazio no início, preenchido por `deformTissue`) e define, por
@@ -370,7 +394,8 @@ export class Patient {
    * - anterior: a língua (pela cor de região) e toda a parede anterior da faringe, da base da língua até a
    *   base da epiglote (valécula e epiglote incluídas). Logo acima da glote o peso cai a zero: é a
    *   "dobradiça" da epiglote, e a laringe em si não se deforma;
-   * - palato: palato mole, úvula e pilares (pela cor).
+   * - palato: palato mole, úvula e pilares (pela cor);
+   * - laringe: o bloco da laringe, à frente da fenda do esôfago (pela posição).
    * Os pesos são suavizados pela malha para que a mucosa estique aos poucos junto ao tecido fixo.
    */
   private buildTongueMorph(): void {
@@ -392,18 +417,27 @@ export class Patient {
       const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
       return t * t * (3 - 2 * t);
     };
-    const corPerto = (i: number, r: number, g: number, b: number, raio: number) =>
-      Math.min(1, Math.max(0, 1 - Math.hypot(col.getX(i) - r, col.getY(i) - g, col.getZ(i) - b) / raio));
+    const dist = (i: number, c: number[]) => Math.hypot(col.getX(i) - c[0], col.getY(i) - c[1], col.getZ(i) - c[2]);
+    const LINGUA = [0.74, 0.38, 0.36], PALATO = [0.72, 0.3, 0.3], MUCOSA = [0.66, 0.24, 0.23];
+    this.larynx = new Float32Array(n);
     for (let i = 0; i < n; i++) {
       const y = pos.getY(i), z = pos.getZ(i);
-      // Língua pela cor (abaixo de y = 1,50 a mesma cor é das aritenoides).
-      const lingua = corPerto(i, 0.74, 0.38, 0.36, 0.09) * smooth(1.5, 1.512, y); // raio curto: a cor do palato é vizinha
+      // A classificação pela cor é binária (a cor mistura as regiões onde elas se encostam; um peso
+      // proporcional deixaria vértices no meio do caminho, formando uma parede). Na dúvida entre língua e
+      // palato, é língua. Abaixo de y = 1,505 a cor da língua é a das aritenoides: lá vale só a geometria.
+      const dL = dist(i, LINGUA), dP = dist(i, PALATO), dM = dist(i, MUCOSA);
+      const ehLingua = dL < dM && dL < dP * 1.6;
+      const lingua = ehLingua ? smooth(1.505, 1.512, y) : 0;
       // Parede anterior da faringe: à frente do meio do lúmen (que recua para trás ao subir até a base da língua).
       const meio = 0.061 + (0.0505 - 0.061) * smooth(1.515, 1.535, y);
       const faringe = smooth(meio - 0.003, meio + 0.003, z) * smooth(1.48, 1.492, y) * (1 - smooth(1.535, 1.548, y));
       this.tissue[i] = Math.max(lingua, faringe);
-      // Palato mole e úvula: só acima da base da língua (mais abaixo, misturas de outras cores se parecem com esta).
-      this.palate[i] = corPerto(i, 0.72, 0.3, 0.3, 0.05) * smooth(1.538, 1.548, y);
+      // Palato mole, úvula e pilares: só acima da base da língua (mais abaixo outras misturas têm essa cor).
+      this.palate[i] = !ehLingua && dP < dM ? smooth(1.538, 1.548, y) : 0;
+      // Bloco da laringe: tudo o que fica à frente do espaço retroaritenóideo e da fenda do esôfago
+      // (aritenoides, glote, cricoide, começo da traqueia). A lâmina o traciona para a frente.
+      const fenda = 0.0405 + (0.044 - 0.0405) * smooth(1.458, 1.47, y);
+      this.larynx[i] = smooth(fenda - 0.0012, fenda + 0.0012, z) * smooth(1.425, 1.462, y) * (1 - smooth(1.49, 1.505, y));
     }
 
     // Suavização pela malha (média com os vizinhos, algumas passadas).
@@ -434,9 +468,10 @@ export class Patient {
       }
       return cur;
     };
-    // Depois de suavizar, o miolo de cada região volta a valer 1 (a transição fica só na borda).
-    this.tissue = blur(this.tissue, 24).map((w) => smooth(0.12, 0.6, w));
-    this.palate = blur(this.palate, 8).map((w) => smooth(0.12, 0.6, w));
+    // Depois de suavizar, o miolo de cada região volta a valer 1: a transição fica só numa borda curta.
+    this.tissue = blur(this.tissue, 10).map((w) => smooth(0.08, 0.4, w));
+    this.palate = blur(this.palate, 6).map((w) => smooth(0.08, 0.4, w));
+    this.larynx = blur(this.larynx, 3);
     // Um vértice é de um tecido só: onde a língua domina, o palato não age (e vice-versa).
     for (let i = 0; i < n; i++) {
       if (this.tissue[i] >= this.palate[i]) this.palate[i] = 0;
@@ -446,11 +481,12 @@ export class Patient {
 
   /**
    * Deforma os tecidos moles da via aérea (morph). `fn` recebe a posição atual de cada vértice no mundo e o
-   * tipo de tecido ('anterior' = língua e epiglote; 'palato' = palato mole, úvula e pilares) e devolve o
+   * tipo de tecido ('anterior' = língua e epiglote; 'palato' = palato mole, úvula e pilares; 'laringe' = bloco
+   * da laringe) e devolve o
    * deslocamento desejado (mundo), ou null para não mexer. O deslocamento é ponderado pelo peso do tecido,
    * convertido para a pose de repouso (inversa da parte linear do skinning) e ligado/desligado por `pose.tongue`.
    */
-  deformTissue(fn: (P: Vector3, tipo: 'anterior' | 'palato') => Vector3 | null): void {
+  deformTissue(fn: (P: Vector3, tipo: 'anterior' | 'palato' | 'laringe') => Vector3 | null): void {
     const air = this.air;
     const morph = air?.geometry.morphAttributes.position?.[0] as BufferAttribute | undefined;
     if (!air || !morph) return;
@@ -467,12 +503,14 @@ export class Patient {
     for (let i = 0; i < pos.count; i++) {
       const anterior = this.tissue[i] > 0;
       const w = anterior ? this.tissue[i] : this.palate[i];
-      if (w <= 0) continue;
+      const wl = this.larynx[i];
+      if (w <= 0 && wl <= 0) continue;
       p.fromBufferAttribute(pos, i);
       skin(i, P.copy(p));
-      const d = fn(P, anterior ? 'anterior' : 'palato');
-      if (!d) continue;
-      d.multiplyScalar(w);
+      const d = new Vector3();
+      if (w > 0) d.addScaledVector(fn(P, anterior ? 'anterior' : 'palato') ?? d, w);
+      if (wl > 0) d.addScaledVector(fn(P, 'laringe') ?? new Vector3(), wl);
+      if (d.lengthSq() === 0) continue;
       for (let k = 0; k < 3; k++) {
         q.copy(p).setComponent(k, p.getComponent(k) + eps);
         col[k].copy(skin(i, q)).sub(P).divideScalar(eps);
@@ -483,9 +521,40 @@ export class Patient {
       out[i * 3 + 1] = d.y;
       out[i * 3 + 2] = d.z;
     }
+    // Onde a língua encosta no palato a malha é uma folha só; ao separá-los, essa junção viraria uma cortina
+    // de triângulos esticados no meio do canal. Com a lâmina no lugar esses triângulos deixam de ser
+    // desenhados (índice alternativo, ver `applyPose`): é a abertura do istmo das fauces.
+    const index = air.geometry.index;
+    if (index) {
+      this.indexFechado ??= index;
+      const src = this.indexFechado.array;
+      const keep: number[] = [];
+      const a = new Vector3(), b = new Vector3();
+      const stretched = (i: number, j: number): boolean => {
+        a.fromBufferAttribute(pos, i);
+        b.fromBufferAttribute(pos, j);
+        const antes = a.distanceTo(b);
+        a.x += out[i * 3]; a.y += out[i * 3 + 1]; a.z += out[i * 3 + 2];
+        b.x += out[j * 3]; b.y += out[j * 3 + 1]; b.z += out[j * 3 + 2];
+        const depois = a.distanceTo(b);
+        return depois > 0.003 && depois > antes * 4;
+      };
+      // Só na boca e no istmo (acima da base da língua): em volta da laringe a mucosa estica, mas não abre.
+      const alto = (i: number) => pos.getY(i) > 1.53;
+      for (let t = 0; t < src.length; t += 3) {
+        const i = src[t], j = src[t + 1], k = src[t + 2];
+        const abre = alto(i) && alto(j) && alto(k) && (stretched(i, j) || stretched(j, k) || stretched(k, i));
+        if (!abre) keep.push(i, j, k);
+      }
+      this.indexAberto = new BufferAttribute(new Uint32Array(keep), 1);
+    }
     // A textura de morph é criada uma vez por geometria: descartar os buffers força a recriação com os dados novos.
     air.geometry.dispose();
   }
+
+  /** Índices da via aérea: malha íntegra e malha com o istmo aberto (ver `deformTissue`). */
+  private indexFechado: BufferAttribute | null = null;
+  private indexAberto: BufferAttribute | null = null;
 
   private armSolution: Record<string, Quaternion> = {};
 
@@ -635,6 +704,20 @@ export class Patient {
     teeth.skeleton.update();
     teeth.getVertexPosition(this.incisors[which], out);
     return out.applyMatrix4(teeth.matrixWorld);
+  }
+
+  private skinMaterial: Material | null = null;
+  private innerMaterial: Material | null = null;
+
+  /**
+   * Visão de dentro da boca: a pele do corpo passa a ser desenhada como mucosa escura. De dentro só se vê o
+   * avesso da pele, pelas frestas da mucosa esticada; assim essas frestas somem em vez de aparecerem claras.
+   */
+  setInsideView(on: boolean): void {
+    this.skinMaterial ??= this.body.material as Material;
+    this.innerMaterial ??= new MeshStandardMaterial({ color: 0x2c0a0b, roughness: 0.75, side: DoubleSide });
+    const mat = on ? this.innerMaterial : this.skinMaterial;
+    if (this.body.material !== mat) this.body.material = mat;
   }
 
   /** Posição atual (mundo) de um ponto da via aérea. */
