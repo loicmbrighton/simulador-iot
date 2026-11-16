@@ -404,6 +404,7 @@ export class App {
     if (!p || !coxim) return;
     this.hands[side].tool = null;
     coxim.consume();
+    this.easy.olfativa = true; // a colinha já avança; os comandos ficam bloqueados até o corte terminar
     this.mode = 'lateral';
     this.setHover(null);
     for (const s of SIDES) this.hands[s].setLayer(LAYER_WORLD);
