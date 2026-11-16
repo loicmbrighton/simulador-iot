@@ -79,6 +79,18 @@ Queixa do usuário: as animações das mãos (coxim, laringoscópio etc.) estava
 3. **Gestos gravados (proposto, não feito):** o usuário faz os gestos diante da webcam (rastreamento de mãos no
    navegador) e eles viram as animações. É o caminho mais fiel à técnica real.
 
+## Ajustes pedidos pelo usuário (rodada de imagens)
+- **Abertura da boca:** tesoura no canto direito da boca (indicador nos incisivos superiores, polegar nos
+  inferiores), sem torcer o punho; o médico se debruça (olhos a ~35 cm da boca, `APROXIMA` em app.ts) e a
+  cabeça estende mais (`EXT_ABERTA`).
+- **Coxim:** a cabeça não pode flutuar. `Patient.seat()` acha a flexão do pescoço que encosta o occipício no
+  topo do coxim e é chamado sempre que a extensão muda. A mão que ergue a cabeça vai por trás dela (antes
+  atravessava a mesa). Posição olfativa com mais extensão (`SNIFF`).
+- **Laringoscopia:** o médico se debruça e a cabeça estende mais (`EXT_LAMINA`). Os ombros acompanham o corpo
+  (não a inclinação da cabeça) e recuam ao se curvar, para o braço não passar diante da câmera.
+- **Visão pela boca:** pregas vocais brancas destacadas, traqueia escurecida entre elas, entrada do esôfago
+  como abertura escura e nomes na tela ("Pregas vocais (traqueia)", "Esôfago"; tecla L esconde).
+
 ## Estado atual
 - Etapas 1 a 5 funcionando de ponta a ponta (`tools/screenshots.mjs` percorre tudo com mouse e teclado e
   confere o estado a cada passo). Detalhes técnicos no `CLAUDE.md`, seção "Código".

@@ -118,7 +118,8 @@ src/
   bloqueia os comandos enquanto roda; `ui.blink()` escurece a tela na troca.
 - **Paciente:** `applyPose` só mexe em ossos e no morph (pode rodar todo quadro). `flex` (pescoço) e `ext`
   (cabeça) vão de 0 (neutra, cabeça no colchão) a 1 (olfativa sobre o coxim); `ext` > 1 = extensão extra da
-  laringoscopia. A medição cara (`layout`) roda uma vez. Abaixo da cricoide os pesos da traqueia passam para o
+  laringoscopia. Depois de mudar `ext` com o coxim no lugar, chamar `seat()` (senão a cabeça flutua ou
+  afunda no coxim). A medição cara (`layout`) roda uma vez. Abaixo da cricoide os pesos da traqueia passam para o
   tórax (`anchorTrachea`). `incisor()`, `nuca()`, `airLandmark()` e `glottisFrame()` dão pontos vivos.
 - **Laringoscópio:** o modelo é espelhado em X e empunhado com o cabo para cima e a lâmina embaixo (uso real;
   a flange fica à esquerda do operador). `App.prepareSight` calcula a linha de visão (incisivos superiores →
@@ -129,6 +130,10 @@ src/
   malha também piorou. Triângulos muito esticados no istmo deixam de ser desenhados (índice alternativo) e,
   na visão pela boca, a pele vira mucosa escura (`setInsideView`) e a periferia escurece (`setScopeView`).
   A placa de "assoalho da boca" da malha de dentes do MakeHuman foi removida (`trimMouthFloor`): tapava a visão.
+- **Aproximação do médico:** `App.closeUp` liga durante as ações na boca; a visão vai para perto da boca
+  (`APROXIMA`). Os ombros seguem o corpo (`bodyEye`), não a câmera, exceto na visão pela boca.
+- **Visão pela boca:** `Patient.placeVocalFolds`/`placeEsophagus` desenham as pregas vocais e a entrada do
+  esôfago; `ui.setLabels` põe os nomes na tela (tecla L).
 - **Depuração visual:** `debugSection(x)` corta a cena num plano sagital e `debugMarks(pontos)` marca pontos;
   foi o que permitiu acertar a laringoscopia (olhar o corte, não adivinhar).
 - **Controles:** mouse aponta (destaque + dica), clique age com a mão ativa, Tab troca a mão ativa,

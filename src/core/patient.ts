@@ -1,5 +1,5 @@
 import {
-  Bone, BufferAttribute, CanvasTexture, DoubleSide, Float32BufferAttribute, Group, Matrix3, Mesh, MeshBasicMaterial,
+  Bone, BufferAttribute, CanvasTexture, CapsuleGeometry, DoubleSide, Float32BufferAttribute, Group, Matrix3, Mesh, MeshBasicMaterial,
   MeshStandardMaterial, PlaneGeometry, SRGBColorSpace,
   Quaternion, SkinnedMesh, Vector3, BoxGeometry, type Material,
 } from 'three';
@@ -97,6 +97,9 @@ const AIR_LANDMARKS = {
   valecula: new Vector3(0, 1.501, 0.078),
   comissuraAnterior: new Vector3(0, 1.4765, 0.0715),
   glotePosterior: new Vector3(0, 1.4765, 0.0505),
+  /** Processos vocais (ponta posterior de cada prega vocal), esquerdo (+x) e direito (−x). */
+  procVocalEsq: new Vector3(0.0045, 1.4765, 0.0505),
+  procVocalDir: new Vector3(-0.0045, 1.4765, 0.0505),
   traqueiaAnterior: new Vector3(0, 1.446, 0.072),
   /** Parede posterior da hipofaringe, atrás das aritenoides (entrada do esôfago). */
   hipofaringePosterior: new Vector3(0, 1.485, 0.041),
@@ -106,8 +109,8 @@ const AIR_LANDMARKS = {
 export type AirLandmarkName = keyof typeof AIR_LANDMARKS;
 
 /** Posição olfativa: flexão do pescoço sobre o coxim e extensão da cabeça (graus, por osso). */
-// Com estes ângulos o plano da face fica ~13° estendido em relação à horizontal (medido no modelo).
-const SNIFF = { head: -28, neck03: -7, neck02: 4.4, neck01: 9.1 };
+// Com estes ângulos o plano da face fica ~20° estendido em relação à horizontal (pedido do usuário: mais extensão).
+const SNIFF = { head: -34, neck03: -8.5, neck02: 4.4, neck01: 9.1 };
 const NECK_BONES = ['head', 'neck03', 'neck02', 'neck01'] as const;
 
 export interface PatientPose {
@@ -220,12 +223,12 @@ export class Patient {
     }
     if (this.air) {
       if (this.air.morphTargetInfluences) this.air.morphTargetInfluences[0] = tongue;
-      if (tongue < 0.5) this.esophagusMark.visible = false;
+      if (tongue < 0.5) this.hideGlottisMarks();
       const index = tongue > 0.05 ? this.indexAberto : this.indexFechado;
       if (index && this.air.geometry.index !== index) this.air.geometry.setIndex(index);
       // A via aérea só é vista pela boca, com a cabeça já posicionada. Fora disso fica oculta: nas poses
       // extremas do pescoço ela não acompanha a pele e apareceria por fora.
-      this.air.visible = ext > 0.95 && Math.abs(flex - 1) < 0.05;
+      this.air.visible = ext > 0.95 && flex > 0.6 && flex < 1.6;
     }
     // Elipsoide da cabeça (para o cursor): interpola entre as duas posições medidas.
     const k = Math.min(1, Math.max(0, (flex + ext) / 2));
@@ -252,6 +255,34 @@ export class Patient {
     this.body.skeleton.update();
     this.body.getVertexPosition(this.nucaVertex, out);
     return out.applyMatrix4(this.body.matrixWorld);
+  }
+
+  /**
+   * Assenta a cabeça no coxim: com o coxim no lugar, ajusta a flexão do pescoço para o occipício encostar no
+   * topo da toalha (bisseção). Chamar depois de mudar a extensão da cabeça: sem isso, a cabeça flutua acima
+   * do coxim ou o atravessa. Devolve a flexão encontrada.
+   */
+  seat(): number {
+    if (!this.towel.visible) return this.pose.flex;
+    const topo = this.towel.position.y + this.towel.scale.y / 2 + 0.002;
+    let lo = 0.2, hi = 2.2;
+    for (let i = 0; i < 14; i++) {
+      const mid = (lo + hi) / 2;
+      this.applyPose({ flex: mid });
+      if (this.occiput().y > topo) hi = mid;
+      else lo = mid;
+    }
+    this.applyPose({ flex: (lo + hi) / 2 });
+    return this.pose.flex;
+  }
+
+  /** Flexão que assenta a cabeça no coxim com a extensão `ext`, sem mudar a pose atual. */
+  seatedFlex(ext: number): number {
+    const antes = { ...this.pose };
+    this.applyPose({ ext });
+    const f = this.seat();
+    this.applyPose(antes);
+    return f;
   }
 
   /** Ponto mais baixo da cabeça (occipício) na pose atual, no mundo. */
@@ -344,6 +375,9 @@ export class Patient {
     };
     for (let i = 0; i < pos.count; i++) {
       const y = pos.getY(i), z = pos.getZ(i);
+      // Traqueia: escurece logo abaixo das pregas vocais, para a glote se ler como uma abertura escura.
+      const t = 0.85 * (1 - smooth(1.455, 1.474, y)) * smooth(0.0475, 0.0505, z);
+      if (t > 0) col.setXYZ(i, col.getX(i) * (1 - t) + 0.12 * t, col.getY(i) * (1 - t) + 0.03 * t, col.getZ(i) * (1 - t) + 0.03 * t);
       // Atrás da face posterior das aritenoides (z < 0,047), da altura delas (y ≈ 1,488) para baixo.
       const k = 0.96 * (1 - smooth(1.47, 1.492, y)) * (1 - smooth(0.0465, 0.0495, z)) * smooth(1.42, 1.435, y);
       if (k <= 0) continue;
@@ -734,6 +768,39 @@ export class Patient {
     m.visible = false;
     return m;
   })();
+
+  /**
+   * Pregas vocais destacadas para a visão pela boca: duas faixas brancas da comissura anterior a cada processo
+   * vocal. Na malha elas são só uma faixa de cor de 1–2 mm, que de longe some.
+   */
+  readonly vocalFolds: Mesh[] = [0, 1].map(() => {
+    const m = new Mesh(new CapsuleGeometry(1, 1, 4, 10), new MeshStandardMaterial({ color: 0xf1ebe3, roughness: 0.35 }));
+    m.visible = false;
+    return m;
+  });
+
+  /** Posiciona as pregas vocais destacadas na pose atual. */
+  placeVocalFolds(): void {
+    const ant = this.airLandmark('comissuraAnterior');
+    const centro = this.glottisFrame().centro;
+    [this.airLandmark('procVocalEsq'), this.airLandmark('procVocalDir')].forEach((proc, i) => {
+      const m = this.vocalFolds[i];
+      if (!m.parent) this.root.add(m);
+      // Junto à comissura as duas quase se tocam; a linha média entre elas é a fenda da glote.
+      const a = ant.clone().lerp(proc, 0.06);
+      const b = proc.clone().lerp(centro, 0.1);
+      const len = a.distanceTo(b);
+      m.position.copy(a).lerp(b, 0.5);
+      m.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), b.clone().sub(a).normalize());
+      m.scale.set(0.0016, len / 3, 0.0016); // cápsula: altura = comprimento + 2·raio
+      m.visible = true;
+    });
+  }
+
+  hideGlottisMarks(): void {
+    for (const m of this.vocalFolds) m.visible = false;
+    this.esophagusMark.visible = false;
+  }
 
   /** Coloca a marca da entrada do esôfago no ponto `at` (mundo), voltada para `olho`. */
   placeEsophagus(at: Vector3, olho: Vector3, anterior: Vector3): void {

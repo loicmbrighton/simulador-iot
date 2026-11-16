@@ -27,30 +27,47 @@ const LAYER_FPS = 1;
 const Q_LIVRE = new Quaternion().setFromEuler(new Euler(0.35, 0, 0));
 /** Troca de instrumento na camada FPS: quanto a mão desce (para fora da tela) antes de voltar. */
 const MERGULHO = new Vector3(0, -0.16, -0.06);
-/** Mão que toca o paciente: dedos apontando para baixo e para frente. */
-const Q_TOQUE = new Quaternion().setFromEuler(new Euler(0.95, 0, 0.25));
-/** Mão sob o occipício: palma para cima, dedos apontando para os pés do paciente. */
-const Q_NUCA = new Quaternion().setFromEuler(new Euler(-0.18, 0, Math.PI));
+/**
+ * Abertura em tesoura (mão direita no canto direito da boca): dedos apontando para baixo, para dentro da boca,
+ * levemente para os pés; polegar para o lado do queixo (pés) e indicador para o lado do nariz; palma voltada
+ * para o meio da boca. Referencial local da mão: +Z = dedos, polegar em +X, palma em −Y.
+ */
+const Q_TESOURA = new Quaternion().setFromRotationMatrix(
+  new Matrix4().makeBasis(new Vector3(0, 0.45, 0.89), new Vector3(-1, 0, 0), new Vector3(0, -0.89, 0.45)),
+);
+const Q_NUCA = new Quaternion().setFromRotationMatrix(
+  // Mão por trás da cabeça (lado do médico): palma voltada para o occipício, dedos para cima e por cima dele.
+  new Matrix4().makeBasis(new Vector3(1, 0, 0), new Vector3(0, 0.37, -0.93), new Vector3(0, 0.93, 0.37)),
+);
 /** Mão espalmada sobre a fronte: palma para baixo, dedos para os pés. */
 const Q_TESTA = new Quaternion().setFromEuler(new Euler(0.12, 0, 0));
 /** Distância do ponto de empunhadura até a superfície da palma (ver `hands/hand.ts`). */
 const PALMA = 0.016;
 /** Abertura da mandíbula (graus): boca aberta em tesoura e com a lâmina tracionando. */
 const JAW_ABERTA = 27;
+/** Extensão da cabeça (1 = posição olfativa) com a boca aberta: a mão direita estende a cabeça ao abrir. */
+const EXT_ABERTA = 1.18;
 const JAW_LAMINA = 32;
 /** Extensão extra da cabeça durante a laringoscopia (1 = posição olfativa). */
-const EXT_LAMINA = 1.2;
+const EXT_LAMINA = 1.32;
 /**
  * Luzes da visão pela boca. A lâmpada da lâmina fica quase apagada (está a milímetros do aço e estouraria a
  * imagem); quem ilumina é uma luz no lugar dela, um pouco afastada.
  */
 const INTERNA = { luzCamera: 0.05, luzLamina: 0.00005, ambiente: 0.35 };
+/** Posição do olho (e ponto olhado) em relação à boca quando o médico se debruça sobre o paciente. */
+const APROXIMA = {
+  olho: new Vector3(0.05, 0.3, -0.21),
+  mira: new Vector3(0, 0, 0.05),
+  /** Ao se curvar, os ombros ficam atrás e abaixo dos olhos (somado à posição normal deles). */
+  ombros: new Vector3(0, -0.04, -0.22),
+};
 /** Geometria da laringoscopia (metros). Ver `App.prepareSight`. */
 const VISAO = {
   /** A linha de visão passa esta distância abaixo da borda dos incisivos superiores. */
   sobIncisivos: 0.004,
   /** 0 = mira na glote, 1 = mira na parede posterior da hipofaringe (entrada do esôfago). */
-  miraEsofago: 0.62,
+  miraEsofago: 0.4,
   /** Quanto a lâmina traciona a laringe para a frente: abre o espaço atrás das aritenoides (entrada do esôfago). */
   tracaoLaringe: 0.012,
   /** Posição da entrada do esôfago na imagem, entre as aritenoides (0) e a parede posterior (1). */
@@ -151,6 +168,12 @@ export class App {
   /** A mão está agindo no paciente (o médico se aproxima enquanto isso). */
   private readonly inWorld: Record<Side, boolean> = { left: false, right: false };
   private focus = 0;
+  /** Olho do médico fora da visão pela boca: os ombros acompanham o corpo, não o giro da cabeça. */
+  private readonly bodyEye = DOCTOR.eye.clone();
+  /** Nomes das estruturas na visão pela boca (tecla L). */
+  labels = true;
+  /** Uma ação na boca está em andamento: o médico se aproxima. */
+  private closeUp = false;
   /** Corte de câmera em andamento: bloqueia os comandos até terminar. */
   private cut: Sequencia | null = null;
   /**
@@ -275,6 +298,7 @@ export class App {
     this.mode = 'medico';
     this.cut = null;
     this.focus = 0;
+    this.closeUp = false;
     this.lean.set(0, 0, 0);
     this.yaw = 0;
     this.pitch = 0;
@@ -535,7 +559,8 @@ export class App {
     // A outra mão, se estiver livre, ergue a cabeça pelo occipício e depois a estende pela fronte.
     const outra: Side = side === 'left' ? 'right' : 'left';
     if (!this.hands[outra].tool) {
-      const nuca = (): Pose => ({ pos: p.nuca().add(new Vector3(0, PALMA - 0.004, -0.012)), quat: Q_NUCA });
+      // Por trás da cabeça (lado do médico), com a palma no occipício: ergue sem passar por baixo da mesa.
+      const nuca = (): Pose => ({ pos: p.nuca().add(new Vector3(0, 0.045, -0.04)), quat: Q_NUCA });
       const testa = (): Pose => ({ pos: p.landmark('fronte').add(new Vector3(0, -PALMA + 0.006, -0.01)), quat: Q_TESTA });
       const sobreTesta = (): Pose => {
         const t = testa();
@@ -544,7 +569,7 @@ export class App {
       };
       const atrasDaCabeca = (): Pose => {
         const n = nuca();
-        n.pos.add(new Vector3(0, 0, -0.14));
+        n.pos.add(new Vector3(0, 0.04, -0.1));
         return n;
       };
       this.act(outra, [
@@ -565,12 +590,22 @@ export class App {
       { dur: T.chegar },
       { dur: T.erguer, update: (t) => p.applyPose({ flex: 1.3 * t, ext: 0.15 * t }) },
       { dur: T.deslizar, update: (t) => (p.towel.position.z = lerp(z0, p.towelRest.z, t)) },
-      { dur: T.pousar, update: (t) => p.applyPose({ flex: lerp(1.3, 1, t), ext: lerp(0.15, 0.4, t) }) },
+      {
+        // Pousa a cabeça: a flexão vai até a que assenta o occipício no coxim (sem flutuar nem afundar).
+        dur: T.pousar,
+        update: (t) => {
+          const ext = lerp(0.15, 0.4, t);
+          p.applyPose({ ext, flex: lerp(1.3, p.seatedFlex(ext), t) });
+        },
+      },
       { dur: T.trocar },
       {
         dur: T.estender,
         inicio: () => this.ui.setCaption('Posição olfativa: coxim sob o occipício, pescoço fletido e cabeça estendida.'),
-        update: (t) => p.applyPose({ ext: lerp(0.4, 1, t) }),
+        update: (t) => {
+          p.applyPose({ ext: lerp(0.4, 1, t) });
+          p.seat();
+        },
       },
       { dur: T.ver },
       {
@@ -593,50 +628,53 @@ export class App {
   }
 
   /**
-   * Abertura da boca em tesoura com a mão direita: o polegar e o indicador vão aos dentes e se afastam,
-   * a mandíbula desce acompanhada pela mão e a cabeça cede um pouco em extensão.
+   * Abertura da boca em tesoura com a mão direita. O médico se debruça; a mão chega pelo canto direito da
+   * boca com o indicador nos incisivos superiores e o polegar nos inferiores; os dois se afastam (o polegar
+   * empurra a mandíbula para baixo) e a cabeça estende um pouco mais, apoiada no coxim.
    */
   private doOpenMouth(): void {
     const p = this.patient;
     if (!p) return;
     const side: Side = 'right';
     const hand = this.hands[side];
-    hand.root.updateMatrixWorld(true);
-    const tipLocal = hand.root.worldToLocal(hand.tipWorld());
+    this.closeUp = true;
+    // Ponta do indicador em relação ao punho, com o gesto de tesoura já formado.
+    const indicador = new Vector3(0.032, 0.02, 0.1);
     const at = (): Pose => {
-      // Ponta do indicador nos dentes de baixo, do lado direito da boca (acompanha a mandíbula).
-      const alvo = p.landmark('labioInferior').lerp(p.landmark('comissuraDireita'), 0.45);
-      return { pos: alvo.sub(tipLocal.clone().applyQuaternion(Q_TOQUE)), quat: Q_TOQUE };
+      // Indicador nos incisivos superiores, no lado direito do paciente (acompanha a cabeça).
+      const alvo = p.incisor('upper').add(new Vector3(-0.011, 0.004, 0.002));
+      return { pos: alvo.sub(indicador.clone().applyQuaternion(Q_TESOURA)), quat: Q_TESOURA };
     };
     const pre = (): Pose => {
       const a = at();
-      a.pos.add(new Vector3(-0.02, 0.07, -0.06));
+      a.pos.add(new Vector3(-0.03, 0.06, -0.05));
       return a;
     };
     this.act(side, [
-      // Gesto de tesoura: indicador e polegar estendidos e juntos, os outros dedos recolhidos.
+      // Indicador e polegar estendidos, os outros dedos recolhidos.
       ...this.caminho(side, [
-        { pose: pre, dur: 0.55, passa: true, inicio: () => (hand.fingerCurl = [0.3, 0.85, 0.95, 1, 0.35]) },
-        { pose: at, dur: 0.35, arco: 0 },
+        { pose: pre, dur: 0.6, passa: true, inicio: () => (hand.fingerCurl = [0.15, 0.85, 0.95, 1, 0.45]) },
+        { pose: at, dur: 0.4, arco: 0 },
       ]),
-      this.seguir(side, at, 0.95, {
+      this.seguir(side, at, 1.0, {
         update: (t) => {
-          p.applyPose({ jaw: JAW_ABERTA * t, ext: 1 + 0.06 * Math.sin(Math.PI * t) });
-          // Os dedos se afastam enquanto a boca abre.
-          hand.fingerCurl = [lerp(0.3, 0, t), 0.85, 0.95, 1, lerp(0.35, 0, t)];
+          p.applyPose({ jaw: JAW_ABERTA * t, ext: lerp(1, EXT_ABERTA, t) });
+          p.seat();
+          // O polegar desce com a mandíbula (a tesoura se abre).
+          hand.fingerCurl = [0.15, 0.85, 0.95, 1, lerp(0.45, -0.1, t)];
         },
       }),
-      this.seguir(side, at, 0.25),
+      this.seguir(side, at, 0.3),
       ...this.caminho(side, [
         {
-          pose: pre, dur: 0.35, passa: true, arco: 0,
+          pose: pre, dur: 0.4, passa: true, arco: 0,
           inicio: () => {
             this.easy.bocaAberta = true;
             hand.fingerCurl = null;
             this.world.refreshLandmarks();
           },
         },
-        { pose: () => this.restPose(side), dur: 0.5 },
+        { pose: () => this.restPose(side), dur: 0.55, inicio: () => (this.closeUp = false) },
       ]),
     ], true);
   }
@@ -653,7 +691,9 @@ export class App {
     const tool = this.tools.find((t) => t.def.id === 'laringoscopio')!;
     const jaw = p.pose.jaw;
     const ext = p.pose.ext;
+    const flex = p.pose.flex;
     p.applyPose({ jaw: JAW_LAMINA, ext: EXT_LAMINA, tongue: 0 });
+    p.seat();
     const g = p.glottisFrame();
     // A lâmina traciona a laringe para a frente: a mira fica entre a glote (já deslocada) e a parede
     // posterior da hipofaringe, para a glote e a entrada do esôfago aparecerem na mesma imagem.
@@ -711,7 +751,7 @@ export class App {
       const alvo = Math.min(teto(s), VISAO.tetoMax) + VISAO.folgaLamina; // logo além da lâmina
       return h < alvo ? anterior.clone().multiplyScalar((alvo - h) * lado * ends) : null;
     });
-    p.applyPose({ jaw, ext });
+    p.applyPose({ jaw, ext, flex });
   }
 
   /**
@@ -751,6 +791,7 @@ export class App {
     const side: Side = 'left';
     const hand = this.hands[side];
     this.prepareSight();
+    this.closeUp = true;
     this.act(side, [
       this.ir(side, () => this.scopePose(0, 0), 0.85),
       {
@@ -759,7 +800,8 @@ export class App {
         linear: true,
         update: (u) => {
           const t = minJerk(u);
-          p.applyPose({ tongue: smooth(0.2, 1, t), jaw: lerp(JAW_ABERTA, JAW_LAMINA, t), ext: lerp(1, EXT_LAMINA, t) });
+          p.applyPose({ tongue: smooth(0.2, 1, t), jaw: lerp(JAW_ABERTA, JAW_LAMINA, t), ext: lerp(EXT_ABERTA, EXT_LAMINA, t) });
+          p.seat();
           const pose = this.scopePose(t, 0);
           hand.place(pose.pos, pose.quat);
         },
@@ -781,6 +823,7 @@ export class App {
   /** Corta para a visão de dentro da boca. A esquerda segura o laringoscópio; a direita escolhe pela roda. */
   private enterInside(): void {
     this.easy.laringoscopia = true;
+    this.closeUp = false;
     this.mode = 'interna';
     this.ui.blink();
     this.active = 'right';
@@ -834,7 +877,8 @@ export class App {
         linear: true,
         update: (u) => {
           const t = minJerk(u);
-          p.applyPose({ tongue: 1 - smooth(0, 0.75, t), jaw: lerp(JAW_LAMINA, JAW_ABERTA, t), ext: lerp(EXT_LAMINA, 1, t) });
+          p.applyPose({ tongue: 1 - smooth(0, 0.75, t), jaw: lerp(JAW_LAMINA, JAW_ABERTA, t), ext: lerp(EXT_LAMINA, EXT_ABERTA, t) });
+          p.seat();
           const pose = this.scopePose(1 - t, 1 - t);
           hand.place(pose.pos, pose.quat);
         },
@@ -1006,6 +1050,7 @@ export class App {
     const inp = this.input;
     this.elapsed += dt;
     if (inp.pressed.has('KeyH')) this.ui.toggleHelp();
+    if (inp.pressed.has('KeyL')) this.labels = !this.labels;
     if (this.mode !== 'medico' || this.cut) return;
     if (inp.pressed.has('Tab')) this.active = this.active === 'left' ? 'right' : 'left';
     if (inp.pressed.has('KeyX')) {
@@ -1034,15 +1079,23 @@ export class App {
       this.view.lookAt(sight.mira);
     } else {
       const eye = DOCTOR.eye.clone().add(this.lean);
-      // O médico se debruça um pouco sobre o paciente enquanto age nele.
-      eye.addScaledVector(this.world.landmarks.boca.clone().sub(eye).normalize(), VIEWMODEL.focus * this.focus);
       const dir = DOCTOR.lookAt.clone().sub(DOCTOR.eye).normalize();
       dir.applyAxisAngle(Y, this.yaw);
       const side = dir.clone().cross(Y).normalize();
       dir.applyAxisAngle(side, this.pitch);
+      const alvo = eye.clone().addScaledVector(dir, 0.75);
+      // Ao mexer na boca o médico se debruça sobre o paciente: olhos a ~35 cm da boca, olhando para ela.
+      // Os ombros vêm junto (presos à visão), então os braços dobram em vez de esticar.
+      if (this.focus > 1e-3) {
+        const boca = this.world.landmarks.boca;
+        const k = minJerk(this.focus);
+        eye.lerp(boca.clone().add(APROXIMA.olho), k);
+        alvo.lerp(boca.clone().add(APROXIMA.mira), k);
+      }
+      this.bodyEye.copy(eye);
       this.view.position.copy(eye);
       this.view.up.copy(Y);
-      this.view.lookAt(eye.clone().add(dir));
+      this.view.lookAt(alvo);
     }
     this.view.rotateY(Math.PI);
     this.view.updateMatrixWorld();
@@ -1082,16 +1135,34 @@ export class App {
     this.scene.environmentIntensity = inside ? INTERNA.ambiente : 0.45;
     this.patient?.setInsideView(inside && !this.debugView);
     this.ui.setScopeView(inside && !this.debugView);
-    if (inside && this.sight && this.patient && this.esophagusAt) this.patient.placeEsophagus(this.esophagusAt, this.view.position, this.sight.anterior);
-    else if (this.patient && this.mode !== 'interna') this.patient.esophagusMark.visible = false;
+    if (inside && this.sight && this.patient && this.esophagusAt) {
+      const p = this.patient;
+      p.placeEsophagus(this.esophagusAt, this.view.position, this.sight.anterior);
+      p.placeVocalFolds();
+      // Nomes na tela (Modo Easy): onde estão a glote e o esôfago.
+      if (this.labels && !this.debugView) {
+        const tela = (v: Vector3) => {
+          const q = v.clone().project(cam);
+          return { x: (q.x + 1) / 2, y: (1 - q.y) / 2 };
+        };
+        this.ui.setLabels([
+          { texto: 'Pregas vocais (traqueia)', ...tela(p.glottisFrame().centro), lado: 'cima' },
+          { texto: 'Esôfago', ...tela(this.esophagusAt), lado: 'baixo' },
+        ]);
+      } else this.ui.setLabels(null);
+    } else {
+      this.ui.setLabels(null);
+      if (this.patient && !inside) this.patient.hideGlottisMarks();
+    }
     const scope = this.tools.find((t) => t.def.id === 'laringoscopio');
     if (scope?.light && scope.light.intensity > 0) scope.light.intensity = this.mode === 'interna' ? INTERNA.luzLamina : 0.35;
   }
 
   private updateHands(dt: number): void {
     const reach = (DOCTOR.upperArm + DOCTOR.forearm) * 0.96;
-    const alvoFoco = this.mode === 'medico' && (this.inWorld.left || this.inWorld.right) ? 1 : 0;
-    this.focus += (alvoFoco - this.focus) * (1 - Math.exp(-3.5 * dt));
+    // Aproxima enquanto uma mão age na boca (abrir, laringoscopia); afasta para pegar instrumentos.
+    const alvoFoco = this.mode === 'medico' && this.closeUp ? 1 : 0;
+    this.focus = alvoFoco > this.focus ? Math.min(1, this.focus + dt / 0.7) : Math.max(0, this.focus - dt / 0.9);
     const antes = new Vector3();
     for (const side of SIDES) {
       const hand = this.hands[side];
@@ -1118,12 +1189,21 @@ export class App {
       if (dt > 1e-5) this.handVel[side].copy(hand.root.position).sub(antes).divideScalar(dt);
       // Ombro preso à câmera (fora da tela). Se o alvo está além do alcance, o cotovelo é resolvido com um
       // ombro adiantado e a manga é desenhada desde o ombro real: o braço alonga em vez de aparecer solto.
-      const origin = DOCTOR.shoulder[side].clone().applyMatrix4(this.delta);
+      // Ombros: presos ao corpo (acompanham o olho e o giro horizontal, mas não a inclinação da cabeça; senão,
+      // ao olhar para baixo, o ombro "vem para a frente" e o braço passa diante da câmera). Na visão pela
+      // boca não há corpo à vista: aí seguem a câmera.
+      const origin = this.mode === 'interna'
+        ? DOCTOR.shoulder[side].clone().applyMatrix4(this.delta)
+        : DOCTOR.shoulder[side].clone().sub(DOCTOR.eye).add(APROXIMA.ombros.clone().multiplyScalar(minJerk(this.focus)))
+          .applyAxisAngle(Y, this.yaw).add(this.bodyEye);
       const shoulder = origin.clone();
       const to = hand.root.position.clone().sub(shoulder);
       const d = to.length();
       if (d > reach) shoulder.addScaledVector(to, (d - reach) / d);
-      const pole = new Vector3(side === 'left' ? 0.45 : -0.45, -0.5, -0.15).applyQuaternion(this.deltaQ).add(shoulder);
+      const pole = new Vector3(side === 'left' ? 0.45 : -0.45, -0.5, -0.15);
+      if (this.mode === 'interna') pole.applyQuaternion(this.deltaQ);
+      else pole.applyAxisAngle(Y, this.yaw);
+      pole.add(shoulder);
       hand.update(dt, shoulder, pole, origin);
     }
   }

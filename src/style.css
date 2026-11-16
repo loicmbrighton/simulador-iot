@@ -161,6 +161,20 @@ h2 { margin: 20px 0 10px; font-size: 14px; color: var(--muted); font-weight: 600
 }
 .scopeview.on { opacity: 1; }
 
+/* Nomes das estruturas na visão pela boca */
+.labels { position: absolute; inset: 0; }
+.label { position: absolute; width: 0; height: 0; }
+.label .dot {
+  position: absolute; left: -5px; top: -5px; width: 10px; height: 10px; border-radius: 50%;
+  border: 2px solid #ffffff; box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.5);
+}
+.label .text {
+  position: absolute; left: 0; transform: translateX(-50%); white-space: nowrap; padding: 4px 10px; border-radius: 8px;
+  background: rgba(8, 14, 18, 0.82); border: 1px solid rgba(255, 255, 255, 0.5); font-weight: 700; font-size: 13px;
+}
+.label.cima .text { bottom: 14px; }
+.label.baixo .text { top: 14px; }
+
 /* Corte de câmera */
 .cutfade { position: absolute; inset: 0; background: #05080a; opacity: 0; }
 

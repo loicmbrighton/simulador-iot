@@ -107,6 +107,6 @@ export const SHOTS = {
    * Visão pela boca (laringoscopia): a câmera fica sobre a linha boca → laringe. `recuo` = 0 na laringe,
    * 1 nos lábios; `direita`/`posterior` afastam a câmera da lâmina (metros).
    */
-  interna: { recuo: 0.85, direita: 0.004, posterior: 0.006, fov: 33 },
+  interna: { recuo: 0.85, direita: 0.004, posterior: 0.009, fov: 33 },
   medico: { fov: 58 },
 };

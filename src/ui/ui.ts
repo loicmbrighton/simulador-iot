@@ -19,6 +19,7 @@ export const HELP_LINES: [string, string][] = [
   ['W A S D', 'Olhar em volta (ou botão direito + mouse)'],
   ['Setas', 'Inclinar o corpo'],
   ['X', 'Recentralizar a visão'],
+  ['L', 'Mostrar/ocultar os nomes na visão pela boca'],
   ['H', 'Mostrar/ocultar ajuda'],
   ['Esc', 'Pausa (na visão da laringoscopia: retirar o laringoscópio e voltar)'],
 ];
@@ -47,6 +48,8 @@ export class UI {
   private readonly caption = el('div', 'caption');
   private readonly fade = el('div', 'cutfade');
   private readonly vignette = el('div', 'scopeview');
+  private readonly labelBox = el('div', 'labels');
+  private labelKey = '';
   private readonly wheel = el('div', 'wheel');
   private toastTimer = 0;
   private checklistKey = '';
@@ -63,7 +66,7 @@ export class UI {
     this.toast.setAttribute('role', 'status');
     this.caption.setAttribute('role', 'status');
     this.hud.append(
-      this.vignette, this.fade, this.flashBox, this.topLeft, this.vitals, this.topRight, this.checklist, this.handBoxes.left, this.handBoxes.right, this.wheel,
+      this.vignette, this.labelBox, this.fade, this.flashBox, this.topLeft, this.vitals, this.topRight, this.checklist, this.handBoxes.left, this.handBoxes.right, this.wheel,
       this.caption, this.help, this.toast, this.hint,
     );
     root.append(this.hud, this.menu);
@@ -159,6 +162,29 @@ export class UI {
     void this.flashBox.offsetWidth; // reinicia a animação
     this.flashBox.classList.add('on');
     this.flash(msg, true);
+  }
+
+  /**
+   * Nomes de estruturas presos a pontos da imagem (coordenadas 0..1 da tela). `lado` = de onde sai o nome:
+   * acima ou abaixo do ponto. null esconde.
+   */
+  setLabels(itens: { texto: string; x: number; y: number; lado: 'cima' | 'baixo' }[] | null): void {
+    this.labelBox.hidden = itens === null;
+    if (!itens) return;
+    const key = itens.map((i) => i.texto).join('|');
+    if (key !== this.labelKey) {
+      this.labelKey = key;
+      this.labelBox.replaceChildren(...itens.map((i) => {
+        const d = el('div', `label ${i.lado}`);
+        d.append(el('span', 'dot'), el('span', 'text', i.texto));
+        return d;
+      }));
+    }
+    itens.forEach((i, n) => {
+      const d = this.labelBox.children[n] as HTMLElement;
+      d.style.left = `${(i.x * 100).toFixed(2)}%`;
+      d.style.top = `${(i.y * 100).toFixed(2)}%`;
+    });
   }
 
   /** Visão pela boca: escurece a periferia, como o campo visto através da boca aberta na laringoscopia. */

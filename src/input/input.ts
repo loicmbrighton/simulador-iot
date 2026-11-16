@@ -3,7 +3,7 @@ import { Vector2 } from 'three';
 /** Teclas cujo comportamento padrão do navegador deve ser bloqueado durante o jogo. */
 const GAME_KEYS = new Set([
   'Space', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
-  'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyX', 'KeyH',
+  'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyX', 'KeyH', 'KeyL',
 ]);
 
 /** Estado bruto de teclado e mouse, lido uma vez por quadro. */
