@@ -1,4 +1,5 @@
-// Gera screenshots de inspeção a partir do build em dist/ (rode `npx vite build` antes).
+// Percorre o Modo Easy com mouse e teclado de verdade e gera screenshots de inspeção a partir do build
+// em dist/ (rode `npx vite build` antes). Também serve de teste de ponta a ponta: falha se uma etapa travar.
 // Uso: node tools/screenshots.mjs [pasta_saida]
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -24,34 +25,51 @@ const url = `http://localhost:${server.address().port}/`;
 
 const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
 const page = await browser.newPage({ viewport: { width: 1280, height: 760 }, deviceScaleFactor: 1 });
+page.setDefaultTimeout(120000); // o renderizador por software é lento, sobretudo na visão interna
 page.on('pageerror', (e) => console.error('ERRO NA PÁGINA:', e.message));
 page.on('console', (m) => m.type() === 'error' && console.error('console:', m.text()));
 await page.goto(url);
 await page.waitForFunction(() => window.__sim);
-await page.waitForTimeout(800);
 
+const sim = (fn, arg) => page.evaluate(fn, arg);
+// Espera quadros renderizados (não tempo: a taxa de quadros aqui é baixa e irregular).
+const quadros = async (n = 2) => {
+  const f = await sim(() => window.__sim.frames);
+  await page.waitForFunction((alvo) => window.__sim.frames >= alvo, f + n);
+};
 const shot = async (name) => {
-  await page.waitForTimeout(700);
+  await quadros(3);
   await page.screenshot({ path: `${out}/${name}.png` });
   console.log('ok', name);
 };
-const sim = (fn, arg) => page.evaluate(fn, arg);
-
-await page.waitForFunction(() => window.__sim.world.patient, null, { timeout: 180000 }).catch(() => console.log('paciente não carregou'));
-await shot('01_menu');
-await page.click('.primary');
-await shot('02_inicio_ajuda');
-
-await sim(() => window.__sim.ui.toggleHelp(false));
-await shot('03_repouso_maos_fps');
+const livre = async () => {
+  await quadros(2); // o clique só vira ação no quadro seguinte
+  await page.waitForFunction(() => !window.__sim.animating);
+};
+const estado = () => sim(() => {
+  const s = window.__sim;
+  return { ...s.easy, modo: s.mode, erros: s.erros, spo2: s.world.vitals.spo2, esq: s.hands.left.tool?.def.id ?? null, dir: s.hands.right.tool?.def.id ?? null };
+});
+const conferir = async (nome, esperado) => {
+  const e = await estado();
+  for (const [k, v] of Object.entries(esperado)) {
+    if (e[k] !== v) throw new Error(`${nome}: esperava ${k} = ${v}, veio ${e[k]} (${JSON.stringify(e)})`);
+  }
+};
 
 // Posição na tela (px) de um ponto do mundo, para mover o mouse até ele.
 const tela = (alvo) => sim((alvo) => {
   const s = window.__sim;
+  const V = s.camera.position.constructor;
   const p = alvo === 'boca' ? s.world.landmarks.boca.clone()
     : alvo === 'cabeca' ? s.world.landmarks.fronte.clone()
-    : alvo === 'bandeja' ? s.world.landmarks.boca.clone().set(-0.6, 0.94, 0.2) // área vazia do campo
-    : s.tools.find((t) => t.def.id === alvo).object.getWorldPosition(s.world.landmarks.boca.clone());
+    : alvo === 'bandeja' ? new V(-0.6, 0.94, 0.2) // área vazia do campo
+    : (() => {
+      // Instrumento: origem da peça; o coxim é grande e a origem fica fora dele, então usa o centro.
+      const t = s.tools.find((t) => t.def.id === alvo);
+      const o = t.object.getWorldPosition(new V());
+      return alvo === 'coxim' ? o.add(new V(0, 0.07, 0)) : o;
+    })();
   p.project(s.camera);
   const r = s.renderer.domElement.getBoundingClientRect();
   return { x: r.left + ((p.x + 1) / 2) * r.width, y: r.top + ((1 - p.y) / 2) * r.height };
@@ -61,85 +79,98 @@ const apontar = async (alvo) => {
   await page.mouse.move(p.x - 30, p.y - 30);
   await page.mouse.move(p.x, p.y, { steps: 4 });
   await quadros(2);
-  return p;
 };
-// Espera alguns quadros renderizados (o renderizador por software é lento e irregular).
-const quadros = async (n) => {
-  const f = await sim(() => window.__sim.frames);
-  await page.waitForFunction((alvo) => window.__sim.frames >= alvo, f + n);
-};
-const livre = async () => {
-  await quadros(2); // o clique só vira ação no quadro seguinte
-  await page.waitForFunction(() => !window.__sim.busy('left') && !window.__sim.busy('right'));
+const clicar = async (alvo) => {
+  await apontar(alvo);
+  await page.mouse.down();
+  await page.mouse.up();
+  await livre();
 };
 
-// Destaque e dica sobre a boca e a cabeça.
-await apontar('boca');
-await shot('04_dica_boca');
+await page.waitForFunction(() => window.__sim.world.patient, null, { timeout: 180000 });
+await shot('01_menu');
+await page.click('.primary');
+await shot('02_inicio_neutro');
+
+// Erro de conduta: mão direita livre na boca antes do coxim (fora de ordem).
+await clicar('boca');
+await page.waitForFunction(() => document.querySelector('.redflash.on'));
+await shot('03_erro_fora_de_ordem');
+await conferir('erro', { erros: 1, olfativa: false });
+
+// 1–2. Coxim e posição olfativa (corte lateral).
+await apontar('coxim');
+await shot('04_dica_coxim');
+await clicar('coxim');
+await conferir('coxim na mão', { dir: 'coxim' });
 await apontar('cabeca');
-await shot('05_dica_cabeca');
-
-// Tab: mão esquerda ativa; pegar o laringoscópio.
-await page.keyboard.press('Tab');
-await apontar('laringoscopio');
-await shot('06_dica_laringoscopio');
+await shot('05_dica_colocar_coxim');
 await page.mouse.down();
 await page.mouse.up();
+await page.waitForFunction(() => window.__sim.mode === 'lateral');
+await shot('06_corte_lateral_neutro');
+await page.waitForFunction(() => window.__sim.world.patient.pose.flex > 1.2);
+await shot('07_corte_lateral_coxim');
+await page.waitForFunction(() => window.__sim.world.patient.pose.ext > 0.99);
+await shot('08_corte_lateral_olfativa');
 await livre();
-await shot('08_laringoscopio_na_mao_esquerda');
+await conferir('olfativa', { olfativa: true, modo: 'medico', dir: null });
+await shot('09_olfativa_visao_do_medico');
 
-// Mão direita pega o tubo.
+// 3. Laringoscópio na mão esquerda.
 await page.keyboard.press('Tab');
-await apontar('tubo');
-await page.mouse.down();
-await page.mouse.up();
-await livre();
-await shot('09_duas_maos_com_instrumentos');
+await clicar('laringoscopio');
+await conferir('laringoscópio', { esq: 'laringoscopio' });
 
-// Clique na boca com a mão esquerda (laringoscópio): a mão sai da camada FPS e age no mundo.
+// Erro: inserir o laringoscópio antes de abrir a boca.
+await clicar('boca');
+await conferir('erro boca fechada', { erros: 2, laringoscopia: false });
+
+// 4. Abrir a boca com a mão direita.
 await page.keyboard.press('Tab');
 await apontar('boca');
-await shot('10_dica_inserir_laringoscopio');
+await shot('10_dica_abrir_boca');
 await page.mouse.down();
 await page.mouse.up();
-await page.waitForFunction(() => {
-  const s = window.__sim;
-  return s.hands.left.tipWorld().distanceTo(s.world.landmarks.boca) < 0.03;
-});
-await page.screenshot({ path: `${out}/11_acao_no_mundo.png` });
-await sim(() => {
-  const s = window.__sim;
-  const V = s.camera.position.constructor;
-  s.debugView = { pos: new V(1.1, 1.45, -0.2), target: new V(0, 1.2, -0.2) };
-});
+await page.waitForFunction(() => window.__sim.world.patient.pose.jaw > 12);
+await page.screenshot({ path: `${out}/11_abrindo_a_boca.png` });
 await livre();
-await shot('12_lateral_bracos');
+await conferir('boca aberta', { bocaAberta: true });
 
-// Devolver o tubo à bandeja.
-await sim(() => (window.__sim.debugView = null));
-await quadros(2);
+// 5. Laringoscopia e visão interna.
 await page.keyboard.press('Tab');
-await apontar('bandeja');
-await shot('13_dica_devolver');
+await apontar('boca');
+await shot('12_dica_inserir_laringoscopio');
 await page.mouse.down();
 await page.mouse.up();
+await page.waitForFunction(() => window.__sim.world.patient.pose.tongue > 0.5);
+await page.screenshot({ path: `${out}/13_inserindo_laringoscopio.png` });
+await page.waitForFunction(() => window.__sim.mode === 'interna');
+await shot('14_visao_interna');
+await conferir('laringoscopia', { laringoscopia: true, modo: 'interna' });
+
+// Roda: a mão direita pega o tubo.
+await page.click('.wheel-item');
 await livre();
-await apontar('aspirador');
-await shot('14_tubo_devolvido_dica_aspirador');
+await conferir('roda', { dir: 'tubo' });
+await shot('15_roda_tubo_na_mao');
 
-// Bandeja e paciente (câmera livre).
-await sim(() => {
+// Vistas externas da laringoscopia (câmera livre).
+const vista = (pos, target) => sim(([p, t]) => {
   const s = window.__sim;
   const V = s.camera.position.constructor;
-  s.debugView = { pos: new V(-0.4, 1.45, -0.05), target: new V(-0.68, 0.94, 0.33) };
-});
-await shot('15_bandeja');
-await sim(() => {
-  const s = window.__sim;
-  const V = s.camera.position.constructor;
-  s.debugView = { pos: new V(1.6, 1.5, 0.6), target: new V(0, 1.0, 0.55) };
-});
-await shot('16_maca_lateral');
+  s.debugView = p ? { pos: new V(...p), target: new V(...t) } : null;
+}, [pos, target]);
+await vista([0.42, 1.3, 0.06], [0, 1.2, 0.07]);
+await shot('16_laringoscopio_lateral');
+await vista(null);
 
+// Esc: desfaz a laringoscopia e volta à visão do médico.
+await page.keyboard.press('Escape');
+await livre();
+await conferir('esc', { laringoscopia: false, modo: 'medico', esq: 'laringoscopio', dir: 'tubo', bocaAberta: true });
+await shot('17_apos_esc');
+
+console.log('estado final:', JSON.stringify(await estado()));
 await browser.close();
 server.close();

@@ -30,8 +30,9 @@ Idioma do projeto, da interface e da documentação: **português (Brasil)**.
 
 ## Foco atual: Modo Easy point-and-click
 **Leia `docs/MODO_EASY.md` antes de qualquer trabalho.** Resumo: só o Modo Easy por enquanto; mãos em camada
-FPS (modelo híbrido); usuário só pega instrumentos e clica no lugar certo; animações automáticas; Tab troca a
-mão ativa; sequência correta de 10 etapas definida lá. Sequência Rápida e Eletiva em standby.
+FPS (modelo híbrido); usuário só pega instrumentos e clica no lugar certo; animações automáticas com cortes
+de câmera; Tab troca a mão ativa; colinha na tela; erro de conduta pisca em vermelho e piora os sinais vitais.
+A sequência (hoje até a laringoscopia) está definida lá. Sequência Rápida e Eletiva em standby.
 
 ## Anatomia (Z-Anatomy)
 Pipeline em `tools/anatomia/`:
@@ -81,42 +82,54 @@ Avaliação do recorte (`docs/referencias/z_anatomy_recorte_inicial.png`):
 - Estratégia: o Z-Anatomy é o **esqueleto de referência** (posições e proporções); a mucosa e os
   tecidos moles deformáveis são modelados por script por cima dele.
 
-## Código (Modo Easy, etapa 1 da implementação: mãos FPS + cursor/clique)
+## Código (Modo Easy: etapas 1 a 5 da sequência)
 ```
 src/
-├── main.ts / app.ts      # entrada, estados (menu/jogo/pausa), loop, visão do médico, mãos em repouso (camada
-│                         # FPS), ações animadas (pegar, devolver, tocar), alvos do cursor, dica e clique
-├── config.ts             # coordenadas, cenários (`disponivel`), postura do médico, VIEWMODEL, LOOK
-├── core/world.ts         # sala, maca, bandeja, monitor, luzes (manequim só até o paciente carregar)
-├── core/patient.ts       # paciente real: carrega public/paciente.json, deita na maca, posição olfativa,
-│                         # toalha sob o occipício, braços aduzidos, lençol moldado, landmarks
+├── main.ts / app.ts      # entrada, estados (menu/jogo/pausa), loop, modos de câmera (médico, corte lateral,
+│                         # visão interna), mãos em repouso (camada FPS), ações no paciente, cursor e clique
+├── config.ts             # coordenadas, cenários (`disponivel`), postura do médico, VIEWMODEL, LOOK, VITALS, SHOTS
+├── core/world.ts         # sala, maca, bandeja, monitor (sinais vitais), luzes, landmarks
+├── core/patient.ts       # paciente real: pose barata por quadro (`applyPose`: jaw, flex, ext, tongue), posição
+│                         # neutra × olfativa, coxim, lençol, landmarks do corpo e da via aérea, morph da língua
 ├── core/materials.ts     # materiais PBR compartilhados
-├── hands/hand.ts, ik.ts  # mãos procedurais (dedos que fecham na empunhadura) + IK de dois ossos
-├── tools/models.ts       # ferramentas procedurais com medidas reais
-├── tools/tools.ts        # definições, pose "pronta", lugar na bandeja, empunhadura
+├── hands/hand.ts, ik.ts  # mãos procedurais (fechamento por dedo, visibilidade, camada) + IK de dois ossos
+├── tools/models.ts       # instrumentos procedurais com medidas reais (inclui o coxim)
+├── tools/tools.ts        # definições, pose "pronta", lugar na bandeja, empunhadura por instrumento
 ├── input/                # entrada bruta (input.ts) e mapeamentos puros testáveis (controls.ts)
+├── game/easy.ts          # regras do Modo Easy: `avaliar` (ação × dica × erro) e a colinha (`PASSOS`); puro, testado
 ├── game/picking.ts       # o que está sob o cursor (raio × esfera/elipsoide/caixa, com prioridade); puro, testado
 ├── game/anim.ts          # `Sequencia` de fases (início/progresso/fim): base das animações automáticas
 ├── game/highlight.ts     # destaque: brilho no instrumento, anel pulsante em pontos do paciente
-└── ui/ui.ts              # menu (só Modo Easy ativo), HUD das mãos, dica ao lado do cursor, ajuda
+└── ui/ui.ts              # menu, HUD (mãos, sinais vitais, colinha), dica do cursor, piscada vermelha, legenda, roda
 ```
 - Coordenadas em metros: +X = esquerda do médico/paciente, +Y = cima, +Z = pés do paciente.
 - **Mãos (modelo híbrido):** em repouso ficam presas à câmera e são desenhadas na camada 1, numa segunda
   passada com a profundidade limpa (nunca atravessam a cena). **Pegar e devolver instrumentos é 100% na
   camada FPS** (decisão do usuário): a mão não vai até a bandeja; ela desce um pouco, o instrumento aparece
-  empunhado e a mão sobe. A mão só sai da camada FPS para a camada 0 (mundo, com oclusão e sombra) quando
-  mexe no paciente (`App.act(..., true)`). Luzes valem nas duas camadas.
+  empunhado e a mão sobe (`App.swap`). A mão só passa para a camada 0 (mundo, com oclusão e sombra) quando
+  mexe no paciente (`App.act(..., true)`) ou num corte de câmera. `pin[lado]` prende a mão a uma pose do
+  mundo recalculada a cada quadro (ex.: a esquerda segurando o laringoscópio na boca).
+- **Câmera (`App.mode`):** `medico` (visão padrão), `lateral` (corte do coxim/posição olfativa, `SHOTS.lateral`)
+  e `interna` (dentro da faringe, no eixo da laringe, olhando a glote; `Patient.glottisFrame`). `App.cut` é a
+  `Sequencia` do corte e bloqueia os comandos enquanto roda.
+- **Paciente:** `applyPose` só mexe em ossos e no morph (pode rodar todo quadro). `flex` (pescoço) e `ext`
+  (cabeça) vão de 0 (neutra, cabeça no colchão) a 1 (olfativa sobre o coxim). A medição cara (`layout`) roda
+  uma vez. Abaixo da cricoide os pesos da traqueia passam para o tórax (`anchorTrachea`).
+- **Laringoscópio:** o modelo é espelhado em X e empunhado com o cabo para cima e a lâmina embaixo (uso real;
+  a flange fica à esquerda do operador). `App.scopePose(u, lift)` calcula a pose ao longo da inserção a partir
+  dos lábios e da valécula (landmarks vivos).
 - **Controles:** mouse aponta (destaque + dica), clique age com a mão ativa, Tab troca a mão ativa,
-  WASD ou botão direito olham em volta, setas inclinam o corpo, X recentraliza, H ajuda, Esc pausa.
-- **Alvos atuais:** instrumentos na bandeja (pegar), bandeja (devolver, com a mão ocupada), cabeça e boca.
-  Cabeça e boca por enquanto só fazem a mão tocar o ponto: as animações das etapas entram em `App.click`.
+  WASD ou botão direito olham em volta, setas inclinam o corpo, X recentraliza, H ajuda, Esc pausa
+  (na visão interna, Esc desfaz a laringoscopia).
 - A bandeja fica à direita do paciente, na altura do ombro, dentro da visão padrão (tudo alcançável só
   com o cursor). Em ações no paciente além do alcance o braço é alongado a partir do ombro (fora da tela).
 - Nomes de ossos no three.js perdem o ponto (`upperarm01.L` → `upperarm01L`; GLTFLoader sanitiza).
 - A página publicada bloqueia fetch de `data:`/`blob:`: o glTF é baixado por fetch relativo e montado como
   .glb em memória (`downloadPatient`); publicar `pagina.html` com `paciente.json` como arquivo de apoio.
-- `window.__sim` expõe o App para testes e depuração; `debugView` troca para câmera livre; `frames` conta
-  quadros (o script de screenshots espera por quadros, não por tempo: o renderizador por software é lento).
+- `window.__sim` expõe o App para testes e depuração: `debugView` (câmera livre), `frames` (contador de
+  quadros), `timeScale` (acelera as animações), `animating`, `equip(lado, id)`, `click({ tipo })`.
+- O renderizador por software dos testes é muito lento na visão interna (a malha da via aérea cobre a tela):
+  esperar por quadros/estado, não por tempo, e usar timeouts longos.
 
 Comandos:
 - `npm run dev`: servidor local. `npm test`: testes (Vitest). `npm run typecheck`.

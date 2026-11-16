@@ -328,9 +328,12 @@ export class Patient {
     };
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-      if (y < 1.5) continue; // abaixo disso a mesma cor é das aritenoides
+      // Abaixo de y = 1,50 a mesma cor é das aritenoides; a valécula e a base junto à epiglote quase não
+      // se movem (transição suave, para a malha não rasgar).
+      const altura = smooth(1.503, 1.53, y);
+      if (altura <= 0) continue;
       const d = Math.hypot(col.getX(i) - 0.74, col.getY(i) - 0.38, col.getZ(i) - 0.36);
-      const w = Math.min(1, Math.max(0, 1 - d / 0.1));
+      const w = Math.min(1, Math.max(0, 1 - d / 0.1)) * altura;
       if (w <= 0) continue;
       const lateral = 1 - smooth(-0.004, 0.026, x); // lado direito e centro são empurrados; a borda esquerda quase não
       const base = 1 - smooth(0.075, 0.1, z); // 1 na base da língua (voltada para a faringe)

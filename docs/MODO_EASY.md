@@ -23,45 +23,49 @@ Motivo: bugs da Fase 0. Ao pegar instrumentos o braço comprimia/atrapalhava a v
    bandeja coloca-o na mão ativa.
 - Remove o controle livre das mãos (WASD/mouse em 3D) da Fase 0; WASD/setas podem ficar para olhar/inclinar.
 
-## Sequência correta (v1)
-Paciente já sedado, relaxado e monitorizado; material na bandeja; laringoscópio já montado.
-O paciente começa com a cabeça em posição **neutra** (a posição olfativa é a etapa 1).
+## Sequência correta (v2, decidida com o usuário)
+Paciente já sedado, relaxado e monitorizado; material na bandeja (o coxim é um instrumento da bandeja);
+laringoscópio já montado. O paciente começa com a cabeça em posição **neutra**, apoiada no colchão.
 
-| # | Mão | Ação do usuário | Animação automática |
+| # | Mão | Ação do usuário | O que acontece |
 |---|---|---|---|
-| 1 | qualquer, livre | Clicar na cabeça | Coxim (toalha) + extensão da cabeça: posição olfativa |
-| 2 | esquerda | Pegar o laringoscópio | Acende a luz da lâmina |
-| 3 | direita, livre | Clicar na boca | Abertura da boca em tesoura (polegar e indicador nos dentes) |
-| 4 | esquerda | Clicar na boca com o laringoscópio | Lâmina entra pela direita, rebate a língua para a esquerda, ponta na valécula, levanta no eixo do cabo; câmera aproxima e mostra a glote |
-| 5 | direita | Pegar o tubo (esquerda segura o laringoscópio) | n/a |
-| 6 | direita | Clicar na glote | Tubo entra pelo canto direito, passa as cordas, cuff abaixo delas, marca de 22 cm |
-| 7 | direita | Clicar no fio-guia | Retira o fio-guia segurando o tubo |
-| 8 | esquerda | Clicar na boca | Retira o laringoscópio e devolve à bandeja |
-| 9 | direita | Pegar a seringa → clicar no balão-piloto | Insufla o cuff com 10 mL |
-| 10 | direita | Pegar o AMBU → clicar no conector do tubo | Conecta e ventila: tórax expande, curva de capnografia no monitor; intubação confirmada |
+| 1 | qualquer | Pegar o coxim | Aparece na mão (camada FPS) |
+| 2 | a do coxim | Clicar na cabeça | **Corte para a vista lateral**: a cabeça é erguida, o coxim desliza sob o occipício, a cabeça é estendida (posição olfativa); legenda explica; volta à visão do médico |
+| 3 | esquerda | Pegar o laringoscópio | Aparece na mão; a luz da lâmina acende |
+| 4 | direita, livre | Clicar na boca | Mão vai à boca (gesto de tesoura) e a mandíbula abre |
+| 5 | esquerda | Clicar na boca com o laringoscópio | Lâmina entra pela direita, língua rebatida para a esquerda (animação simples), ponta na valécula, tração no eixo do cabo; **corte para a visão de dentro da boca** (glote) |
 
-- **Erros no Easy** (instrumento errado ou ordem trocada): nada de ruim acontece; só uma dica neutra
-  ("Antes, abra a boca do paciente") e o usuário tenta de novo. No fim: tempo e número de cliques extras.
-- Pendências para etapas futuras: ausculta (11) e fixação do tubo (12). Ordem fio-guia/laringoscópio pode
-  ser invertida se o usuário preferir.
+Na **visão interna**: a mão esquerda segura o laringoscópio; a mão direita troca de instrumento por uma
+**roda de seleção** na tela (tubo, aspirador, seringa, AMBU; centro = soltar). **Esc** sai dessa visão e
+desfaz a laringoscopia (a lâmina sai, a boca continua aberta). Fora da visão interna, Esc pausa.
+
+As etapas seguintes (passar o tubo, fio-guia, retirar o laringoscópio, cuff, AMBU/ventilação e confirmação)
+**ainda não têm o visual decidido**: refinar bem as etapas 1 a 5 antes de seguir.
+
+### Colinha e erros
+- **Colinha** no canto esquerdo: a sequência na ordem, com os passos cumpridos marcados e o atual em destaque.
+- **Erro de conduta** = tentar agir **no paciente** com o instrumento errado, com a mão errada ou fora de
+  ordem: a **tela pisca em vermelho**, aparece o motivo e os **sinais vitais pioram** (FC sobe, SpO₂ cai;
+  valores em `VITALS`, `src/config.ts`). Exemplos: laringoscópio na mão direita; laringoscópio com a boca
+  fechada; qualquer coisa na boca antes do coxim e da posição olfativa; coxim na boca.
+- **Não é erro** (no máximo uma dica neutra): pegar o instrumento errado, devolver, clicar na cabeça com a
+  mão livre, tentar abrir a boca com a mão esquerda, repetir algo já feito.
+- As regras ficam em `src/game/easy.ts` (`avaliar`, puro e testado em `tests/easy.test.ts`).
+- Pendências futuras: ausculta e fixação do tubo; tempo e cliques extras no fim.
 
 ## Ordem de implementação
 1. Mãos na camada FPS + sistema de cursor/destaque/clique + Tab. Menu só com Modo Easy ativo. **(feito)**
-2. Etapas 1 a 4 (posição olfativa, abrir a boca, laringoscopia com a língua sendo rebatida: a mais difícil).
-3. Etapas 5 a 10.
-4. Publicar na página de teste (`npm run build:artifact`; ver `CLAUDE.md`).
+2. Etapas 1 a 5 da tabela acima, colinha e erros. **(primeira versão feita; em refinamento com o usuário)**
+3. Etapas seguintes (tubo em diante): aguardando o usuário decidir o visual.
+4. Publicar na página de teste a cada entrega (`npm run build:artifact`; ver `CLAUDE.md`).
 
 ## Estado atual
-- **Etapa 1 da implementação concluída** (detalhes técnicos no `CLAUDE.md`, seção "Código"): mãos em repouso
-  na camada FPS, cursor com destaque e dica, clique com a mão ativa, Tab, pegar e devolver instrumentos com
-  animação leve na camada FPS, menu só com o Modo Easy. Controle livre das mãos e treino de precisão removidos.
-- A bandeja foi movida para a direita do paciente, na altura do ombro, para caber na visão padrão.
-- Clicar na cabeça ou na boca por enquanto só leva a mão até o ponto (sem efeito no paciente).
-- **Próximo (etapa 2):** o paciente ainda começa já em posição olfativa (`Patient` chama
-  `setPose({ ext: 26 })`): começar em neutro, sem toalha, e animar até a olfativa no clique da cabeça. Depois
-  a máquina de etapas (ordem correta, dica neutra em erro, contagem de cliques extras: `App.clicks` já conta
-  os cliques), abertura da boca e laringoscopia.
-- A boca abre pelo osso `jaw` (rotação X positiva); a língua faz parte da malha `via_aerea` (pesada no `jaw`).
-  Rebater a língua vai exigir deformação própria (ossos `tongue00-07` existem no esqueleto, mas a língua da
-  via aérea não está pesada neles ainda).
+- Etapas 1 a 5 funcionando de ponta a ponta (`tools/screenshots.mjs` percorre tudo com mouse e teclado e
+  confere o estado a cada passo). Detalhes técnicos no `CLAUDE.md`, seção "Código".
+- **O que ainda é simples e pode ser refinado:** a mão que abre a boca (gesto de tesoura aproximado); as mãos
+  no corte lateral (uma na lateral da cabeça, outra empurrando o coxim); a língua (morph que desloca a
+  língua para a esquerda e a afunda, sem física); a lâmina na visão interna (aparece só a ponta, no topo).
+- A posição neutra é achada por busca (extensão do pescoço até o occipício tocar o colchão). A via aérea fica
+  oculta fora da posição olfativa, porque nas poses extremas ela não acompanha a pele do pescoço.
+- Sinais vitais são didáticos (não há modelo fisiológico): cada erro soma `VITALS.erro`.
 - Ainda aguardando o retorno do usuário sobre a anatomia da visão laringoscópica (visualizador publicado).

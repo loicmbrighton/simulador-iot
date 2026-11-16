@@ -35,6 +35,12 @@ const Q_APOIO = new Quaternion().setFromRotationMatrix(
 /** Abertura da mandíbula (graus): boca aberta em tesoura e com a lâmina tracionando. */
 const JAW_ABERTA = 27;
 const JAW_LAMINA = 31;
+/**
+ * Luzes da visão interna (candelas): a cena é pequena, então valores baixos já iluminam bem. A lâmpada da
+ * lâmina fica quase apagada aqui (ela está a milímetros do aço e estouraria a imagem); quem ilumina a glote
+ * é a luz junto à câmera.
+ */
+const INTERNA = { luzCamera: 0.001, luzLamina: 0.00005, ambiente: 0.1 };
 /** Instrumentos que a mão direita pode pegar pela roda, na visão da laringoscopia. */
 const RODA: ToolId[] = ['tubo', 'aspirador', 'seringa', 'ambu'];
 
@@ -74,6 +80,8 @@ export class App {
   elapsed = 0;
   /** Quadros renderizados (os testes usam para esperar a cena atualizar). */
   frames = 0;
+  /** Acelera o tempo das animações (só para testes e screenshots). */
+  timeScale = 1;
   /** Cliques de ação e erros de conduta na partida. */
   clicks = 0;
   erros = 0;
@@ -223,6 +231,7 @@ export class App {
       const h = this.hands[side];
       h.tool = null;
       h.curlOverride = null;
+      h.fingerCurl = null;
       h.setVisible(true);
       this.acting[side] = null;
       this.pin[side] = null;
@@ -462,14 +471,15 @@ export class App {
       return a;
     };
     this.act(side, [
-      this.ir(side, pre, 0.45, { inicio: () => (hand.curlOverride = 0.3) }),
+      // Gesto de tesoura: indicador e polegar estendidos, os outros dedos recolhidos.
+      this.ir(side, pre, 0.45, { inicio: () => (hand.fingerCurl = [0.12, 0.85, 0.95, 1, 0.05]) }),
       this.ir(side, at, 0.25),
       this.ir(side, at, 0.7, { update: (t) => p.applyPose({ jaw: JAW_ABERTA * t }) }),
       { dur: 0.3 },
       this.ir(side, () => this.restPose(side), 0.5, {
         inicio: () => {
           this.easy.bocaAberta = true;
-          hand.curlOverride = null;
+          hand.fingerCurl = null;
           this.world.refreshLandmarks();
         },
       }),
@@ -663,7 +673,7 @@ export class App {
 
   // ------------------------------------------------------------------ loop
   private frame(): void {
-    const dt = Math.min(this.clock.getDelta(), 0.05);
+    const dt = Math.min(this.clock.getDelta(), 0.05) * this.timeScale;
     if (this.state === 'jogo') {
       this.updateInput(dt);
       if (this.cut?.update(dt)) this.cut = null;
@@ -694,6 +704,7 @@ export class App {
     const maos = { left: this.hands.left.tool?.def.id ?? null, right: this.hands.right.tool?.def.id ?? null };
     this.ui.updateHud({
       scenario: this.scenario, active: this.active, elapsed: this.elapsed, erros: this.erros,
+      vitals: this.world.vitals, alarme: VITALS.alarme,
       tools: { left: this.hands.left.tool?.def.nome ?? null, right: this.hands.right.tool?.def.nome ?? null },
     });
     const atual = passoAtual(this.easy, maos);
@@ -773,9 +784,17 @@ export class App {
       cam.updateProjectionMatrix();
     }
     cam.updateMatrixWorld();
-    const inside = this.mode === 'interna';
-    this.innerLight.intensity = inside ? 0.012 : 0;
-    if (inside) this.innerLight.position.copy(this.view.position);
+    // Visão interna: só a luz da lâmina e uma luz fraca junto à câmera; o ambiente da sala quase não entra.
+    const inside = this.mode === 'interna' && !this.debugView;
+    this.innerLight.intensity = inside ? INTERNA.luzCamera : 0;
+    if (inside) {
+      // Um pouco à frente da câmera e para o lado posterior: ilumina a glote sem estourar a lâmina, que passa rente.
+      const g = this.patient!.glottisFrame();
+      this.innerLight.position.copy(this.view.position).addScaledVector(g.cranial, -0.022).addScaledVector(g.anterior, -0.006);
+    }
+    this.scene.environmentIntensity = inside ? INTERNA.ambiente : 0.45;
+    const scope = this.tools.find((t) => t.def.id === 'laringoscopio');
+    if (scope?.light && scope.light.intensity > 0) scope.light.intensity = inside ? INTERNA.luzLamina : 0.35;
   }
 
   private updateHands(dt: number): void {

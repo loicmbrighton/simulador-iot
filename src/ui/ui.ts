@@ -41,6 +41,7 @@ export class UI {
   private readonly handBoxes: Record<Side, HTMLDivElement> = { left: el('div', 'handbox left'), right: el('div', 'handbox right') };
   private readonly topLeft = el('div', 'topleft');
   private readonly topRight = el('div', 'topright', 'Tab = trocar de mão · H = ajuda');
+  private readonly vitals = el('div', 'vitals');
   private readonly checklist = el('div', 'checklist panel');
   private readonly flashBox = el('div', 'redflash');
   private readonly caption = el('div', 'caption');
@@ -60,7 +61,7 @@ export class UI {
     this.toast.setAttribute('role', 'status');
     this.caption.setAttribute('role', 'status');
     this.hud.append(
-      this.flashBox, this.topLeft, this.topRight, this.checklist, this.handBoxes.left, this.handBoxes.right, this.wheel,
+      this.flashBox, this.topLeft, this.vitals, this.topRight, this.checklist, this.handBoxes.left, this.handBoxes.right, this.wheel,
       this.caption, this.help, this.toast, this.hint,
     );
     root.append(this.hud, this.menu);
@@ -227,11 +228,22 @@ export class UI {
     this.hint.style.transform = `translate(${Math.max(8, left)}px, ${Math.max(8, top)}px)`;
   }
 
-  updateHud(s: { scenario: ScenarioId; active: Side; elapsed: number; erros: number; tools: Record<Side, string | null> }): void {
+  updateHud(s: {
+    scenario: ScenarioId; active: Side; elapsed: number; erros: number; tools: Record<Side, string | null>;
+    vitals: { fc: number; spo2: number }; alarme: { fc: number; spo2: number };
+  }): void {
     const mm = Math.floor(s.elapsed / 60).toString().padStart(2, '0');
     const ss = Math.floor(s.elapsed % 60).toString().padStart(2, '0');
     const top = `${SCENARIOS[s.scenario].nome} · ${mm}:${ss} · Erros: ${s.erros}`;
     if (this.topLeft.textContent !== top) this.topLeft.textContent = top;
+    // Sinais vitais também na HUD (o monitor da sala nem sempre está à vista).
+    const vkey = `${Math.round(s.vitals.fc)}|${Math.round(s.vitals.spo2)}`;
+    if (this.vitals.dataset.key !== vkey) {
+      this.vitals.dataset.key = vkey;
+      const fc = el('span', s.vitals.fc >= s.alarme.fc ? 'alarm' : '', `FC ${Math.round(s.vitals.fc)}`);
+      const spo2 = el('span', s.vitals.spo2 <= s.alarme.spo2 ? 'alarm' : '', `SpO₂ ${Math.round(s.vitals.spo2)}%`);
+      this.vitals.replaceChildren(fc, spo2);
+    }
     for (const side of ['left', 'right'] as Side[]) {
       const box = this.handBoxes[side];
       const on = s.active === side;

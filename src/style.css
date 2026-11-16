@@ -123,6 +123,17 @@ h2 { margin: 20px 0 10px; font-size: 14px; color: var(--muted); font-weight: 600
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 .toast.error { background: rgba(150, 24, 16, 0.92); border: 1px solid rgba(255, 140, 128, 0.7); }
 
+/* Sinais vitais */
+.vitals {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 14px; padding: 7px 14px; border-radius: 10px;
+  background: var(--hud); backdrop-filter: blur(6px); font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.vitals span:first-child { color: #6dffa0; }
+.vitals span:last-child { color: #7fe0ff; }
+.vitals span.alarm { color: #ff7b6e; animation: alarm 0.9s steps(2, jump-none) infinite; }
+@keyframes alarm { 50% { opacity: 0.45; } }
+.toast { top: 56px; }
+
 /* Colinha */
 .checklist { top: 56px; left: 14px; width: min(300px, calc(100vw - 28px)); }
 .checklist h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.75; }
@@ -172,6 +183,7 @@ h2 { margin: 20px 0 10px; font-size: 14px; color: var(--muted); font-weight: 600
 @media (prefers-reduced-motion: reduce) {
   .toast, .option, .handbox, .wheel-item { transition: none; }
   .redflash.on { animation: redflash-still 1.2s linear; }
+  .vitals span.alarm { animation: none; }
   @keyframes redflash-still { 0%, 80% { opacity: 0.8; } 100% { opacity: 0; } }
 }
 .option:focus-visible, .actions button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

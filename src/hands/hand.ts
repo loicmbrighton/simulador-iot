@@ -59,12 +59,14 @@ export class Hand {
   tool: Tool | null = null;
   /** Força a abertura dos dedos (0 = aberta, 1 = fechada); null = fecha quando há ferramenta. */
   curlOverride: number | null = null;
+  /** Fechamento por dedo (indicador, médio, anelar, mínimo, polegar), para gestos; null = todos iguais. */
+  fingerCurl: number[] | null = null;
+  private readonly curls = [0, 0, 0, 0, 0];
   /** true quando o braço está totalmente esticado (alvo fora do alcance). */
   outOfReach = false;
 
   private readonly model = new Group();
   private readonly fingers: Finger[] = [];
-  private curl = 0;
   private readonly upper: Group;
   private readonly fore: Group;
   private readonly elbowBall: Mesh;
@@ -151,12 +153,13 @@ export class Hand {
   update(dt: number, shoulder: Vector3, pole: Vector3, origin = shoulder): void {
     // Dedos fecham quando há ferramenta.
     const want = this.curlOverride ?? (this.tool ? 1 : 0);
-    this.curl += (want - this.curl) * (1 - Math.exp(-10 * dt));
-    for (const f of this.fingers) {
+    const k = 1 - Math.exp(-10 * dt);
+    this.fingers.forEach((f, n) => {
+      this.curls[n] += ((this.fingerCurl?.[n] ?? want) - this.curls[n]) * k;
       f.joints.forEach((j, i) => {
-        j.rotation.x = f.open[i] + (f.closed[i] - f.open[i]) * this.curl;
+        j.rotation.x = f.open[i] + (f.closed[i] - f.open[i]) * this.curls[n];
       });
-    }
+    });
 
     // IK do braço até o punho.
     this.root.updateMatrixWorld(true);

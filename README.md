@@ -1,9 +1,10 @@
 # simulador-iot
 Simulador 3D de intubação orotraqueal em primeira pessoa (Three.js + TypeScript).
 
-**Status:** Modo Easy point-and-click em construção (`docs/MODO_EASY.md`): mãos em camada FPS, cursor com
-destaque e dica, clique e Tab já funcionam; as animações das etapas da intubação vêm a seguir. Sequência
-Rápida e Eletiva estão em standby (regras em `docs/CENARIOS.md`).
+**Status:** Modo Easy point-and-click em construção (`docs/MODO_EASY.md`). Já funciona do início até a
+laringoscopia: coxim e posição olfativa (corte lateral), abertura da boca, inserção do laringoscópio e visão
+interna da glote, com colinha na tela e erros que pioram os sinais vitais. Sequência Rápida e Eletiva estão
+em standby (regras em `docs/CENARIOS.md`).
 
 ```bash
 npm install
