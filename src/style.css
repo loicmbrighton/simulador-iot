@@ -45,7 +45,7 @@
 html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); }
 body { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; color: var(--text); }
 #app { position: fixed; inset: 0; }
-canvas { display: block; width: 100%; height: 100%; outline: none; cursor: crosshair; }
+canvas { display: block; width: 100%; height: 100%; outline: none; cursor: default; }
 [hidden] { display: none !important; }
 
 /* ---------- Menu ---------- */
@@ -73,6 +73,13 @@ h2 { margin: 20px 0 10px; font-size: 14px; color: var(--muted); font-weight: 600
 .option span { color: var(--muted); }
 .option:hover { border-color: var(--border); }
 .option.selected { border-color: var(--accent); background: var(--selected); }
+.option:disabled { cursor: not-allowed; opacity: 0.55; }
+.option:disabled:hover { border-color: transparent; }
+.option strong { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.badge {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap;
+  padding: 2px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted);
+}
 .note { margin: 10px 0 0; font-size: 12px; color: var(--muted); }
 .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
 .actions button { font: inherit; font-weight: 600; font-size: 15px; padding: 11px 26px; border-radius: 12px; cursor: pointer; border: 1px solid var(--border); }
@@ -90,28 +97,32 @@ h2 { margin: 20px 0 10px; font-size: 14px; color: var(--muted); font-weight: 600
   position: absolute; bottom: 14px; min-width: 210px; max-width: 42vw; padding: 9px 13px; border-radius: 12px; background: var(--hud);
   backdrop-filter: blur(6px); display: flex; flex-direction: column; gap: 2px; border: 1.5px solid transparent;
 }
-.handbox small { opacity: 0.75; font-size: 11px; }
+.handbox small { opacity: 0.85; font-size: 11px; display: flex; align-items: center; gap: 6px; }
 .handbox.left { left: 14px; border-left: 4px solid var(--left); }
 .handbox.right { right: 14px; border-right: 4px solid var(--right); text-align: right; }
-.handbox.active { border-color: #ffffff; }
-.handbox.reach strong::after { content: ' · fora de alcance'; color: var(--warn); font-weight: 500; }
+.handbox.right small { justify-content: flex-end; }
+.handbox { opacity: 0.7; transition: opacity 0.15s, border-color 0.15s; }
+.handbox.active { border-color: #ffffff; opacity: 1; }
 .panel { position: absolute; background: var(--hud); backdrop-filter: blur(8px); border-radius: 14px; padding: 12px 16px; }
 .help { top: 56px; right: 14px; width: min(400px, calc(100vw - 28px)); max-height: calc(100vh - 140px); overflow-y: auto; }
 .help h3 { margin: 0 0 8px; font-size: 14px; }
 .help dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 12px; }
 .help dt { font-weight: 700; white-space: nowrap; color: #ffffff; }
 .help dd { margin: 0; opacity: 0.85; }
-.exercise { top: 56px; left: 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; max-width: calc(100vw - 28px); }
-.tag { padding: 2px 8px; border-radius: 999px; font-weight: 700; font-size: 11px; color: #10161a; }
-.tag.left { background: var(--left); }
-.tag.right { background: var(--right); }
+.tag { padding: 1px 7px; border-radius: 999px; font-weight: 700; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #10161a; }
+.handbox.left .tag { background: var(--left); }
+.handbox.right .tag { background: var(--right); }
+.hint {
+  position: absolute; left: 0; top: 0; max-width: min(340px, 70vw); padding: 6px 11px; border-radius: 9px;
+  background: rgba(8, 14, 18, 0.86); border: 1px solid rgba(53, 200, 255, 0.55); font-weight: 600; line-height: 1.35;
+}
 .toast {
   position: absolute; left: 50%; top: 18px; transform: translate(-50%, -8px); opacity: 0; transition: opacity 0.2s, transform 0.2s;
-  padding: 8px 14px; border-radius: 10px; background: var(--hud); font-weight: 600; white-space: nowrap;
+  padding: 8px 14px; border-radius: 10px; background: var(--hud); font-weight: 600; max-width: calc(100vw - 28px); text-align: center;
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
 @media (prefers-reduced-motion: reduce) {
-  .toast, .option { transition: none; }
+  .toast, .option, .handbox { transition: none; }
 }
 .option:focus-visible, .actions button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

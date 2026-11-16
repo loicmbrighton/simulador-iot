@@ -1,5 +1,5 @@
-import { CapsuleGeometry, CylinderGeometry, Group, Mesh, Object3D, Quaternion, SphereGeometry, Vector3 } from 'three';
-import { DOCTOR, SPEED, type Side } from '../config';
+import { CapsuleGeometry, CylinderGeometry, Group, Mesh, Object3D, type Quaternion, SphereGeometry, Vector3 } from 'three';
+import { DOCTOR, type Side } from '../config';
 import { MAT } from '../core/materials';
 import type { Tool } from '../tools/tools';
 import { solveTwoBone } from './ik';
@@ -7,8 +7,8 @@ import { solveTwoBone } from './ik';
 /**
  * Referencial local da mão (mão direita; a esquerda é espelhada em X):
  *   origem = punho, +Z = direção dos dedos, palma voltada para -Y, polegar em +X.
- * O objeto `root` fica posicionado no ponto de empunhadura (centro do punho fechado),
- * que é o ponto controlado pelo usuário.
+ * O objeto `root` fica posicionado no ponto de empunhadura (centro do punho fechado). Quem posiciona
+ * `root` é o App: preso à câmera em repouso (camada FPS) ou animado no mundo durante uma ação.
  */
 const ANCHOR_IN_WRIST = new Vector3(0, -0.033, 0.083);
 const UP = new Vector3(0, 1, 0);
@@ -56,9 +56,9 @@ export class Hand {
   readonly root = new Group();
   /** Onde as ferramentas são presas (não espelhado). */
   readonly anchor = new Group();
-  readonly target = new Vector3();
-  readonly targetQ = new Quaternion();
   tool: Tool | null = null;
+  /** Força a abertura dos dedos (0 = aberta, 1 = fechada); null = fecha quando há ferramenta. */
+  curlOverride: number | null = null;
   /** true quando o braço está totalmente esticado (alvo fora do alcance). */
   outOfReach = false;
 
@@ -120,19 +120,29 @@ export class Hand {
     parent.add(this.root, this.upper, this.fore, this.elbowBall);
   }
 
-  /** Coloca a mão instantaneamente no alvo (sem suavização). */
-  snap(): void {
-    this.root.position.copy(this.target);
-    this.root.quaternion.copy(this.targetQ);
+  /** Coloca a mão (ponto de empunhadura) numa pose do mundo. */
+  place(pos: Vector3, quat: Quaternion): void {
+    this.root.position.copy(pos);
+    this.root.quaternion.copy(quat);
   }
 
-  update(dt: number, shoulder: Vector3): void {
-    const k = 1 - Math.exp(-SPEED.follow * dt);
-    this.root.position.lerp(this.target, k);
-    this.root.quaternion.slerp(this.targetQ, k);
+  /** Camada de renderização: 1 = camada FPS (por cima da cena), 0 = mundo (com oclusão). Luzes valem nas duas. */
+  setLayer(layer: number): void {
+    for (const o of [this.root, this.upper, this.fore, this.elbowBall]) {
+      o.traverse((c) => {
+        if ((c as unknown as { isLight?: boolean }).isLight) c.layers.enableAll();
+        else c.layers.set(layer);
+      });
+    }
+  }
 
+  /**
+   * Atualiza dedos e braço. `shoulder` e `pole` (direção do cotovelo) em coordenadas do mundo.
+   * `origin` = de onde a manga parte (ombro real); se diferente de `shoulder`, o braço é alongado.
+   */
+  update(dt: number, shoulder: Vector3, pole: Vector3, origin = shoulder): void {
     // Dedos fecham quando há ferramenta.
-    const want = this.tool ? 1 : 0;
+    const want = this.curlOverride ?? (this.tool ? 1 : 0);
     this.curl += (want - this.curl) * (1 - Math.exp(-10 * dt));
     for (const f of this.fingers) {
       f.joints.forEach((j, i) => {
@@ -143,11 +153,10 @@ export class Hand {
     // IK do braço até o punho.
     this.root.updateMatrixWorld(true);
     const wrist = this.model.localToWorld(new Vector3(0, 0, -0.045));
-    const sideSign = this.side === 'left' ? 1 : -1;
-    const pole = shoulder.clone().add(new Vector3(0.45 * sideSign, -0.5, -0.15));
     const { elbow, clamped } = solveTwoBone(shoulder, wrist, pole, DOCTOR.upperArm, DOCTOR.forearm);
     this.outOfReach = clamped;
-    this.placeSegment(this.upper, shoulder, elbow);
+    this.placeSegment(this.upper, origin, elbow);
+    this.upper.scale.y = origin.distanceTo(elbow) / DOCTOR.upperArm;
     this.placeSegment(this.fore, elbow, wrist);
     this.elbowBall.position.copy(elbow);
   }

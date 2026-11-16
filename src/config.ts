@@ -8,7 +8,6 @@ import { Vector3 } from 'three';
  */
 
 export type ScenarioId = 'sri' | 'eletiva' | 'easy';
-export type ControlScheme = 'duas-maos' | 'mao-ativa';
 export type Side = 'left' | 'right';
 
 export interface ScenarioInfo {
@@ -17,6 +16,8 @@ export interface ScenarioInfo {
   local: string;
   resumo: string;
   paredes: number;
+  /** false = em standby (aparece no menu como "em breve"). */
+  disponivel: boolean;
 }
 
 export const SCENARIOS: Record<ScenarioId, ScenarioInfo> = {
@@ -26,6 +27,7 @@ export const SCENARIOS: Record<ScenarioId, ScenarioInfo> = {
     local: 'Sala de emergência',
     resumo: 'Estômago cheio, indução e bloqueio em bólus, sem ventilação de rotina antes da laringoscopia.',
     paredes: 0xb9c4bd,
+    disponivel: false,
   },
   eletiva: {
     id: 'eletiva',
@@ -33,20 +35,16 @@ export const SCENARIOS: Record<ScenarioId, ScenarioInfo> = {
     local: 'Centro cirúrgico',
     resumo: 'Jejum adequado, indução titulada e ventilação sob máscara antes do bloqueio neuromuscular.',
     paredes: 0x9fc3c4,
+    disponivel: false,
   },
   easy: {
     id: 'easy',
     nome: 'Modo Easy',
     local: 'Sala de treino',
-    resumo: 'Só a mecânica da intubação: sem fármacos e sem mensagens de erro para deslizes leves.',
+    resumo: 'Aponte e clique: pegue os instrumentos na ordem certa e clique no lugar certo. As animações são automáticas.',
     paredes: 0xc7c3bb,
+    disponivel: true,
   },
-};
-
-/** Alcance das mãos (caixa no referencial do corpo do médico). */
-export const WORKSPACE = {
-  min: new Vector3(-0.84, 0.95, -0.78),
-  max: new Vector3(0.55, 1.6, 0.5),
 };
 
 export const DOCTOR = {
@@ -60,13 +58,24 @@ export const DOCTOR = {
   leanMax: new Vector3(0.18, 0.12, 0.16),
 };
 
-export const SPEED = {
-  /** Velocidade da mão esquerda pelo teclado (m/s). Shift = modo de precisão. */
-  leftHand: 0.32,
-  precisionFactor: 0.3,
-  rotate: 1.6, // rad/s pelo teclado
-  mouseRotate: 0.006, // rad por pixel
-  wheelHeight: 0.0006, // m por unidade de deltaY da roda
-  /** Constante de suavização do seguimento das mãos (maior = mais rápido). */
-  follow: 14,
+/**
+ * Mãos em repouso na "camada FPS": posições definidas no mundo para a visão padrão do médico e
+ * depois presas à câmera (acompanham o olhar e a inclinação do corpo).
+ */
+export const VIEWMODEL = {
+  rest: { left: new Vector3(0.23, 1.14, -0.33), right: new Vector3(-0.23, 1.14, -0.33) } as Record<Side, Vector3>,
+  /** A mão ativa fica um pouco mais alta e mais à frente que a outra. */
+  activeLift: new Vector3(0, 0.025, 0.03),
+  /** Suavização do retorno à pose de repouso (maior = mais rápido). */
+  follow: 16,
+};
+
+export const LOOK = {
+  /** rad/s pelo teclado (WASD) e rad por pixel com o botão direito. */
+  keys: 1.1,
+  mouse: 0.004,
+  yawMax: 1.2,
+  pitchMin: -0.6,
+  pitchMax: 0.7,
+  lean: 0.25, // m/s
 };

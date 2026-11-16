@@ -43,14 +43,21 @@ O paciente começa com a cabeça em posição **neutra** (a posição olfativa �
   ser invertida se o usuário preferir.
 
 ## Ordem de implementação
-1. Mãos na camada FPS + sistema de cursor/destaque/clique + Tab. Menu só com Modo Easy ativo.
+1. Mãos na camada FPS + sistema de cursor/destaque/clique + Tab. Menu só com Modo Easy ativo. **(feito)**
 2. Etapas 1 a 4 (posição olfativa, abrir a boca, laringoscopia com a língua sendo rebatida: a mais difícil).
 3. Etapas 5 a 10.
 4. Publicar na página de teste (`npm run build:artifact`; ver `CLAUDE.md`).
 
-## Estado ao fim da sessão anterior
-- Paciente real (MakeHuman + via aérea por SDF) já está na maca em posição olfativa, com toalha, lençol e
-  braços aduzidos (`src/core/patient.ts`). Para a etapa 1, começar em posição neutra e animar até a olfativa.
+## Estado atual
+- **Etapa 1 da implementação concluída** (detalhes técnicos no `CLAUDE.md`, seção "Código"): mãos em repouso
+  na camada FPS, cursor com destaque e dica, clique com a mão ativa, Tab, pegar e devolver instrumentos com
+  animação no mundo, menu só com o Modo Easy. Controle livre das mãos e treino de precisão removidos.
+- A bandeja foi movida para a direita do paciente, na altura do ombro, para caber na visão padrão.
+- Clicar na cabeça ou na boca por enquanto só leva a mão até o ponto (sem efeito no paciente).
+- **Próximo (etapa 2):** o paciente ainda começa já em posição olfativa (`Patient` chama
+  `setPose({ ext: 26 })`): começar em neutro, sem toalha, e animar até a olfativa no clique da cabeça. Depois
+  a máquina de etapas (ordem correta, dica neutra em erro, contagem de cliques extras: `App.clicks` já conta
+  os cliques), abertura da boca e laringoscopia.
 - A boca abre pelo osso `jaw` (rotação X positiva); a língua faz parte da malha `via_aerea` (pesada no `jaw`).
   Rebater a língua vai exigir deformação própria (ossos `tongue00-07` existem no esqueleto, mas a língua da
   via aérea não está pesada neles ainda).

@@ -1,5 +1,5 @@
-import { SCENARIOS, type ControlScheme, type ScenarioId, type Side } from '../config';
-import { TOOL_DEFS } from '../tools/tools';
+import type { Vector2 } from 'three';
+import { SCENARIOS, type ScenarioId, type Side } from '../config';
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] => {
   const e = document.createElement(tag);
@@ -10,107 +10,65 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
 
 export interface MenuChoice {
   scenario: ScenarioId;
-  scheme: ControlScheme;
 }
 
-const SCHEMES: Record<ControlScheme, { nome: string; desc: string }> = {
-  'duas-maos': { nome: 'Duas mãos', desc: 'Teclado (WASD) move a mão esquerda; mouse move a mão direita.' },
-  'mao-ativa': { nome: 'Mão ativa', desc: 'O mouse move a mão ativa; Tab alterna entre as mãos.' },
-};
-
-export function helpLines(scheme: ControlScheme): [string, string][] {
-  const common: [string, string][] = [
-    ['Botão direito + mouse', 'Olhar em volta'],
-    ['Setas', 'Inclinar o corpo'],
-    ['X', 'Recentralizar visão e mãos'],
-    ['T', 'Treino de precisão (alvos)'],
-    ['V', 'Trocar esquema de controle'],
-    ['H', 'Mostrar/ocultar ajuda'],
-    ['Esc', 'Pausa'],
-  ];
-  if (scheme === 'duas-maos') {
-    return [
-      ['W A S D', 'Mão esquerda: frente, esquerda, trás, direita'],
-      ['Q / E', 'Mão esquerda: descer / subir'],
-      ['R / F', 'Mão esquerda: inclinar a ponta para frente / trás'],
-      ['Z / C', 'Mão esquerda: girar'],
-      ['Shift (segurado)', 'Mão esquerda: modo precisão'],
-      ['G', 'Mão esquerda: pegar / devolver na bandeja'],
-      ['Mouse', 'Mão direita: mover'],
-      ['Roda do mouse', 'Mão direita: subir / descer'],
-      ['Espaço + mouse', 'Mão direita: inclinar e girar'],
-      ['Clique', 'Mão direita: pegar / devolver na bandeja'],
-      ['1–5', 'Ferramenta na mão direita (0 = soltar)'],
-      ['Shift + 1–5', 'Ferramenta na mão esquerda (Shift+0 = soltar)'],
-      ...common,
-    ];
-  }
-  return [
-    ['Mouse', 'Mover a mão ativa'],
-    ['Roda do mouse', 'Subir / descer'],
-    ['Espaço + mouse', 'Inclinar e girar'],
-    ['Tab', 'Alternar mão ativa'],
-    ['Clique', 'Pegar / devolver na bandeja'],
-    ['1–5', 'Ferramenta na mão ativa (0 = soltar)'],
-    ...common,
-  ];
-}
+export const HELP_LINES: [string, string][] = [
+  ['Mouse', 'Apontar: o que é clicável ganha destaque e uma dica'],
+  ['Clique', 'Agir com a mão ativa: pegar ou devolver na bandeja, usar no paciente'],
+  ['Tab', 'Trocar a mão ativa'],
+  ['W A S D', 'Olhar em volta (ou botão direito + mouse)'],
+  ['Setas', 'Inclinar o corpo'],
+  ['X', 'Recentralizar a visão'],
+  ['H', 'Mostrar/ocultar ajuda'],
+  ['Esc', 'Pausa'],
+];
 
 export class UI {
   private readonly menu = el('div', 'menu');
   private readonly hud = el('div', 'hud');
   private readonly help = el('div', 'help panel');
   private readonly toast = el('div', 'toast');
+  private readonly hint = el('div', 'hint');
   private readonly handBoxes: Record<Side, HTMLDivElement> = { left: el('div', 'handbox left'), right: el('div', 'handbox right') };
   private readonly topLeft = el('div', 'topleft');
-  private readonly topRight = el('div', 'topright');
-  private readonly exerciseBox = el('div', 'exercise panel');
+  private readonly topRight = el('div', 'topright', 'Tab = trocar de mão · H = ajuda');
   private toastTimer = 0;
   private readonly patientStatus = el('p', 'note status', 'Paciente: carregando…');
-  choice: MenuChoice = { scenario: 'easy', scheme: 'duas-maos' };
+  choice: MenuChoice = { scenario: 'easy' };
   onStart: (c: MenuChoice) => void = () => {};
   onResume: () => void = () => {};
 
-  constructor(root: HTMLElement) {
+  constructor(private readonly root: HTMLElement) {
     this.buildMenu();
-    this.hud.append(this.topLeft, this.topRight, this.handBoxes.left, this.handBoxes.right, this.exerciseBox, this.help, this.toast);
+    this.toast.setAttribute('role', 'status');
+    this.hud.append(this.topLeft, this.topRight, this.handBoxes.left, this.handBoxes.right, this.help, this.toast, this.hint);
     root.append(this.hud, this.menu);
     this.hud.hidden = true;
     this.help.hidden = true;
-    this.exerciseBox.hidden = true;
+    this.hint.hidden = true;
+    this.renderHelp();
   }
 
   private buildMenu(): void {
     const card = el('div', 'menu-card');
-    card.append(el('p', 'eyebrow', 'Protótipo · Fase 0: controle das mãos'), el('h1', '', 'Simulador de Intubação Orotraqueal'));
+    card.append(el('p', 'eyebrow', 'Protótipo · Modo Easy'), el('h1', '', 'Simulador de Intubação Orotraqueal'));
     card.append(el('h2', '', 'Cenário'));
     const scenarios = el('div', 'options');
     for (const s of Object.values(SCENARIOS)) {
       const b = el('button', 'option');
       b.type = 'button';
       b.dataset.id = s.id;
-      b.append(el('strong', '', s.nome), el('span', 'where', s.local), el('span', '', s.resumo));
+      b.disabled = !s.disponivel;
+      const title = el('strong', '', s.nome);
+      if (!s.disponivel) title.append(el('span', 'badge', 'Em breve'));
+      b.append(title, el('span', 'where', s.local), el('span', '', s.resumo));
       b.onclick = () => {
         this.choice.scenario = s.id;
         this.syncMenu();
       };
       scenarios.append(b);
     }
-    card.append(scenarios, el('p', 'note', 'Nesta fase os três cenários usam a mesma cena: as regras clínicas de cada um entram na Fase 3.'));
-    card.append(el('h2', '', 'Esquema de controle'));
-    const schemes = el('div', 'options two');
-    for (const [id, s] of Object.entries(SCHEMES) as [ControlScheme, (typeof SCHEMES)[ControlScheme]][]) {
-      const b = el('button', 'option');
-      b.type = 'button';
-      b.dataset.scheme = id;
-      b.append(el('strong', '', s.nome), el('span', '', s.desc));
-      b.onclick = () => {
-        this.choice.scheme = id;
-        this.syncMenu();
-      };
-      schemes.append(b);
-    }
-    card.append(schemes);
+    card.append(scenarios);
     const actions = el('div', 'actions');
     const start = el('button', 'primary', 'Iniciar');
     start.type = 'button';
@@ -121,14 +79,17 @@ export class UI {
     resume.hidden = true;
     resume.onclick = () => this.onResume();
     actions.append(resume, start);
-    card.append(this.patientStatus, actions, el('p', 'note', 'Feito para computador com teclado e mouse. Clique na cena para dar foco ao teclado; H mostra todos os comandos.'));
+    card.append(this.patientStatus, actions, el('p', 'note', 'Feito para computador com teclado e mouse: aponte, clique e use Tab para trocar de mão. H mostra todos os comandos.'));
     this.menu.append(card);
     this.syncMenu();
   }
 
   private syncMenu(): void {
-    this.menu.querySelectorAll<HTMLButtonElement>('[data-id]').forEach((b) => b.classList.toggle('selected', b.dataset.id === this.choice.scenario));
-    this.menu.querySelectorAll<HTMLButtonElement>('[data-scheme]').forEach((b) => b.classList.toggle('selected', b.dataset.scheme === this.choice.scheme));
+    this.menu.querySelectorAll<HTMLButtonElement>('[data-id]').forEach((b) => {
+      const on = b.dataset.id === this.choice.scenario;
+      b.classList.toggle('selected', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
   }
 
   setPatientStatus(text: string): void {
@@ -147,15 +108,14 @@ export class UI {
     this.hud.hidden = false;
   }
 
-  toggleHelp(scheme: ControlScheme, force?: boolean): void {
+  toggleHelp(force?: boolean): void {
     this.help.hidden = force !== undefined ? !force : !this.help.hidden;
-    this.renderHelp(scheme);
   }
 
-  renderHelp(scheme: ControlScheme): void {
-    this.help.replaceChildren(el('h3', '', `Comandos: ${SCHEMES[scheme].nome}`));
+  private renderHelp(): void {
+    this.help.replaceChildren(el('h3', '', 'Comandos'));
     const dl = el('dl');
-    for (const [k, v] of helpLines(scheme)) dl.append(el('dt', '', k), el('dd', '', v));
+    for (const [k, v] of HELP_LINES) dl.append(el('dt', '', k), el('dd', '', v));
     this.help.append(dl);
   }
 
@@ -163,40 +123,39 @@ export class UI {
     this.toast.textContent = msg;
     this.toast.classList.add('show');
     window.clearTimeout(this.toastTimer);
-    this.toastTimer = window.setTimeout(() => this.toast.classList.remove('show'), 1800);
+    this.toastTimer = window.setTimeout(() => this.toast.classList.remove('show'), 2600);
   }
 
-  updateHud(s: {
-    scenario: ScenarioId; scheme: ControlScheme; active: Side; elapsed: number;
-    tools: Record<Side, string | null>; outOfReach: Record<Side, boolean>;
-  }): void {
+  /** Dica ao lado do cursor (null esconde). `pointer` em coordenadas normalizadas (-1..1). */
+  setHint(text: string | null, pointer: Vector2): void {
+    this.hint.hidden = text === null;
+    if (text === null) return;
+    if (this.hint.textContent !== text) this.hint.textContent = text;
+    const w = this.root.clientWidth, h = this.root.clientHeight;
+    const x = ((pointer.x + 1) / 2) * w;
+    const y = ((1 - pointer.y) / 2) * h;
+    // Mantém a dica dentro da tela: passa para a esquerda/acima do cursor perto das bordas.
+    const bw = this.hint.offsetWidth, bh = this.hint.offsetHeight;
+    const left = x + 18 + bw > w - 8 ? x - 18 - bw : x + 18;
+    const top = y + 22 + bh > h - 8 ? y - 14 - bh : y + 22;
+    this.hint.style.transform = `translate(${Math.max(8, left)}px, ${Math.max(8, top)}px)`;
+  }
+
+  updateHud(s: { scenario: ScenarioId; active: Side; elapsed: number; tools: Record<Side, string | null> }): void {
     const mm = Math.floor(s.elapsed / 60).toString().padStart(2, '0');
     const ss = Math.floor(s.elapsed % 60).toString().padStart(2, '0');
-    this.topLeft.textContent = `${SCENARIOS[s.scenario].nome} · ${mm}:${ss}`;
-    this.topRight.textContent = `${SCHEMES[s.scheme].nome} · H = ajuda`;
+    const top = `${SCENARIOS[s.scenario].nome} · ${mm}:${ss}`;
+    if (this.topLeft.textContent !== top) this.topLeft.textContent = top;
     for (const side of ['left', 'right'] as Side[]) {
       const box = this.handBoxes[side];
-      const label = side === 'left' ? 'Mão esquerda' : 'Mão direita';
-      const ctrl = s.scheme === 'duas-maos' ? (side === 'left' ? 'teclado' : 'mouse') : s.active === side ? 'mouse (ativa)' : 'parada';
-      box.classList.toggle('active', s.scheme === 'mao-ativa' && s.active === side);
-      box.classList.toggle('reach', s.outOfReach[side]);
-      box.replaceChildren(el('small', '', `${label} · ${ctrl}`), el('strong', '', s.tools[side] ?? 'Livre'));
+      const on = s.active === side;
+      const key = `${on}|${s.tools[side]}`;
+      if (box.dataset.key === key) continue;
+      box.dataset.key = key;
+      box.classList.toggle('active', on);
+      const label = el('small', '', side === 'left' ? 'Mão esquerda' : 'Mão direita');
+      if (on) label.append(el('span', 'tag', 'ativa'));
+      box.replaceChildren(label, el('strong', '', s.tools[side] ?? 'Livre'));
     }
-  }
-
-  updateExercise(state: { active: boolean; index: number; total: number; nome?: string; mao?: Side; elapsed: number; finished: number | null }): void {
-    this.exerciseBox.hidden = !state.active;
-    if (!state.active) return;
-    if (state.finished !== null) {
-      this.exerciseBox.replaceChildren(el('strong', '', `Treino concluído em ${state.finished.toFixed(1)} s`), el('span', '', 'T para fechar'));
-      return;
-    }
-    this.exerciseBox.replaceChildren(
-      el('strong', '', `Alvo ${state.index + 1}/${state.total}: ${state.nome}`),
-      el('span', state.mao === 'left' ? 'tag left' : 'tag right', state.mao === 'left' ? 'mão esquerda' : 'mão direita'),
-      el('span', '', `${state.elapsed.toFixed(1)} s`),
-    );
   }
 }
-
-export const TOOL_NAMES = Object.fromEntries(TOOL_DEFS.map((d) => [d.id, d.nome]));

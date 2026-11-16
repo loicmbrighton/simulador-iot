@@ -9,8 +9,6 @@ export type ToolId = 'laringoscopio' | 'tubo' | 'seringa' | 'ambu' | 'aspirador'
 export interface ToolDef {
   id: ToolId;
   nome: string;
-  /** Tecla numérica que equipa a ferramenta. */
-  tecla: number;
   build: () => ToolModel;
   /** Orientação "pronta para uso" no mundo, aplicada ao pegar a ferramenta. */
   pronta: Euler;
@@ -23,37 +21,40 @@ export interface ToolDef {
 
 const D = Math.PI / 180;
 
-/** Bandeja (carrinho) à direita do médico, ao alcance da mão direita. Topo = 0,936 m. */
-export const TRAY_TOP = new Vector3(-0.6, 0.936, -0.5);
+/**
+ * Bandeja (carrinho) encostada na maca, à direita do paciente, na altura do ombro: fica dentro da visão
+ * padrão do médico, para que tudo seja alcançável só com o cursor. Topo = 0,936 m.
+ */
+export const TRAY_TOP = new Vector3(-0.68, 0.936, 0.33);
 export const TRAY_SIZE = { x: 0.44, z: 0.5 };
 const UP = new Vector3(0, 1, 0);
 const ALONG = new Vector3(0, 0, 1);
 
 export const TOOL_DEFS: ToolDef[] = [
   {
-    id: 'laringoscopio', nome: 'Laringoscópio (Macintosh 3)', tecla: 1, build: buildLaryngoscope,
+    id: 'laringoscopio', nome: 'Laringoscópio (Macintosh 3)', build: buildLaryngoscope,
     pronta: new Euler(25 * D, 0, 0),
-    bandeja: { pos: new Vector3(-0.64, 0.951, -0.63), ex: UP, ey: ALONG },
+    bandeja: { pos: new Vector3(-0.720, 0.951, 0.200), ex: UP, ey: ALONG },
   },
   {
-    id: 'tubo', nome: 'Tubo orotraqueal 7,5 + fio-guia', tecla: 2, build: buildEndotrachealTube,
+    id: 'tubo', nome: 'Tubo orotraqueal 7,5 + fio-guia', build: buildEndotrachealTube,
     pronta: new Euler(15 * D, 0, 0),
-    bandeja: { pos: new Vector3(-0.44, 0.9425, -0.47), ex: UP, ey: ALONG },
+    bandeja: { pos: new Vector3(-0.520, 0.9425, 0.360), ex: UP, ey: ALONG },
   },
   {
-    id: 'seringa', nome: 'Seringa 10 mL', tecla: 3, build: buildSyringe,
+    id: 'seringa', nome: 'Seringa 10 mL', build: buildSyringe,
     pronta: new Euler(0, 0, 0),
-    bandeja: { pos: new Vector3(-0.54, 0.9455, -0.35), ex: UP, ey: ALONG },
+    bandeja: { pos: new Vector3(-0.620, 0.9455, 0.480), ex: UP, ey: ALONG },
   },
   {
-    id: 'ambu', nome: 'Bolsa-válvula-máscara (AMBU)', tecla: 4, build: buildBagValveMask,
+    id: 'ambu', nome: 'Bolsa-válvula-máscara (AMBU)', build: buildBagValveMask,
     pronta: new Euler(90 * D, 0, 0),
-    bandeja: { pos: new Vector3(-0.765, 0.995, -0.48), ex: new Vector3(0, -1, 0), ey: ALONG },
+    bandeja: { pos: new Vector3(-0.845, 0.995, 0.350), ex: new Vector3(0, -1, 0), ey: ALONG },
   },
   {
-    id: 'aspirador', nome: 'Aspirador rígido (Yankauer)', tecla: 5, build: buildYankauer,
+    id: 'aspirador', nome: 'Aspirador rígido (Yankauer)', build: buildYankauer,
     pronta: new Euler(10 * D, 0, 0),
-    bandeja: { pos: new Vector3(-0.64, 0.9455, -0.38), ex: UP, ey: ALONG },
+    bandeja: { pos: new Vector3(-0.720, 0.9455, 0.450), ex: UP, ey: ALONG },
   },
 ];
 
@@ -89,17 +90,34 @@ export class Tool {
   placeOnTray(parent: Object3D): void {
     this.holder = null;
     parent.add(this.object);
-    const { pos, ex, ey } = this.def.bandeja;
+    const { pos, quat } = this.trayPose();
     this.object.position.copy(pos);
-    this.object.quaternion.setFromRotationMatrix(new Matrix4().makeBasis(ex, ey, ex.clone().cross(ey)));
+    this.object.quaternion.copy(quat);
+    this.object.traverse((o) => {
+      if (!(o as unknown as { isLight?: boolean }).isLight) o.layers.set(0);
+    });
     this.setLight(false);
   }
 
-  attachTo(anchor: Object3D, side: Side): void {
+  /** Pose (mundo) da ferramenta no seu lugar da bandeja. */
+  trayPose(): { pos: Vector3; quat: Quaternion } {
+    const { pos, ex, ey } = this.def.bandeja;
+    return { pos: pos.clone(), quat: new Quaternion().setFromRotationMatrix(new Matrix4().makeBasis(ex, ey, ex.clone().cross(ey))) };
+  }
+
+  /**
+   * Prende a ferramenta à mão. Com `manterPose`, ela continua onde está no mundo (quem chama anima
+   * a acomodação até a empunhadura); sem isso, já fica empunhada.
+   */
+  attachTo(anchor: Object3D, side: Side, manterPose = false): void {
     this.holder = side;
-    anchor.add(this.object);
-    this.object.position.set(0, 0, 0);
-    this.object.quaternion.copy(gripQuat(side));
+    if (manterPose) {
+      anchor.attach(this.object);
+    } else {
+      anchor.add(this.object);
+      this.object.position.set(0, 0, 0);
+      this.object.quaternion.copy(gripQuat(side));
+    }
     this.setLight(this.def.id === 'laringoscopio');
   }
 

@@ -81,30 +81,40 @@ Avaliação do recorte (`docs/referencias/z_anatomy_recorte_inicial.png`):
 - Estratégia: o Z-Anatomy é o **esqueleto de referência** (posições e proporções); a mucosa e os
   tecidos moles deformáveis são modelados por script por cima dele.
 
-## Código (Fase 0: protótipo de controle)
+## Código (Modo Easy, etapa 1 da implementação: mãos FPS + cursor/clique)
 ```
 src/
-├── main.ts / app.ts      # entrada, estados (menu/jogo/pausa), loop, câmera, lógica de controle
-├── config.ts             # sistema de coordenadas, cenários, alcance, postura do médico, velocidades
-├── core/world.ts         # sala, maca, bandeja, monitor, luzes, colisões (manequim só até o paciente carregar)
+├── main.ts / app.ts      # entrada, estados (menu/jogo/pausa), loop, visão do médico, mãos em repouso (camada
+│                         # FPS), ações animadas (pegar, devolver, tocar), alvos do cursor, dica e clique
+├── config.ts             # coordenadas, cenários (`disponivel`), postura do médico, VIEWMODEL, LOOK
+├── core/world.ts         # sala, maca, bandeja, monitor, luzes (manequim só até o paciente carregar)
 ├── core/patient.ts       # paciente real: carrega public/paciente.json, deita na maca, posição olfativa,
-│                         # toalha sob o occipício, braços aduzidos, lençol moldado, landmarks e colisões
+│                         # toalha sob o occipício, braços aduzidos, lençol moldado, landmarks
 ├── core/materials.ts     # materiais PBR compartilhados
 ├── hands/hand.ts, ik.ts  # mãos procedurais (dedos que fecham na empunhadura) + IK de dois ossos
 ├── tools/models.ts       # ferramentas procedurais com medidas reais
-├── tools/tools.ts        # definições, teclas, pose "pronta", posição na bandeja, empunhadura
+├── tools/tools.ts        # definições, pose "pronta", lugar na bandeja, empunhadura
 ├── input/                # entrada bruta (input.ts) e mapeamentos puros testáveis (controls.ts)
-├── game/exercise.ts      # treino de precisão (alvos na face/pescoço)
-└── ui/ui.ts              # menu (cenário + esquema de controle), HUD, ajuda
+├── game/picking.ts       # o que está sob o cursor (raio × esfera/elipsoide/caixa, com prioridade); puro, testado
+├── game/anim.ts          # `Sequencia` de fases (início/progresso/fim): base das animações automáticas
+├── game/highlight.ts     # destaque: brilho no instrumento, anel pulsante em pontos do paciente
+└── ui/ui.ts              # menu (só Modo Easy ativo), HUD das mãos, dica ao lado do cursor, ajuda
 ```
 - Coordenadas em metros: +X = esquerda do médico/paciente, +Y = cima, +Z = pés do paciente.
-- Dois esquemas de controle selecionáveis (menu ou tecla V): **Duas mãos** (WASD = esquerda,
-  mouse = direita) e **Mão ativa** (mouse controla a mão ativa, Tab alterna). O mouse posiciona a
-  mão por raycast num plano horizontal cuja altura muda com a roda; não usa pointer lock.
+- **Mãos (modelo híbrido):** em repouso ficam presas à câmera e são desenhadas na camada 1, numa segunda
+  passada com a profundidade limpa (nunca atravessam a cena). Numa ação (`App.act`) a mão passa para a
+  camada 0 (mundo, com oclusão e sombra), executa a `Sequencia` e volta. Luzes valem nas duas camadas.
+- **Controles:** mouse aponta (destaque + dica), clique age com a mão ativa, Tab troca a mão ativa,
+  WASD ou botão direito olham em volta, setas inclinam o corpo, X recentraliza, H ajuda, Esc pausa.
+- **Alvos atuais:** instrumentos na bandeja (pegar), bandeja (devolver, com a mão ocupada), cabeça e boca.
+  Cabeça e boca por enquanto só fazem a mão tocar o ponto: as animações das etapas entram em `App.click`.
+- A bandeja fica à direita do paciente, na altura do ombro, dentro da visão padrão (tudo alcançável só
+  com o cursor). Para alvos além do alcance o braço é alongado a partir do ombro (fora da tela).
 - Nomes de ossos no three.js perdem o ponto (`upperarm01.L` → `upperarm01L`; GLTFLoader sanitiza).
 - A página publicada bloqueia fetch de `data:`/`blob:`: o glTF é baixado por fetch relativo e montado como
   .glb em memória (`downloadPatient`); publicar `pagina.html` com `paciente.json` como arquivo de apoio.
-- `window.__sim` expõe o App para testes e depuração; `debugView` troca para câmera livre.
+- `window.__sim` expõe o App para testes e depuração; `debugView` troca para câmera livre; `frames` conta
+  quadros (o script de screenshots espera por quadros, não por tempo: o renderizador por software é lento).
 
 Comandos:
 - `npm run dev`: servidor local. `npm test`: testes (Vitest). `npm run typecheck`.

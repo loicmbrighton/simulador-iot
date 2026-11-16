@@ -12,8 +12,8 @@ describe('empunhadura', () => {
       }
     }
   });
-  it('cada ferramenta tem uma tecla única de 1 a 5', () => {
-    const keys = TOOL_DEFS.map((d) => d.tecla).sort();
-    expect(keys).toEqual([1, 2, 3, 4, 5]);
+  it('cada ferramenta tem um identificador único e um lugar próprio na bandeja', () => {
+    expect(new Set(TOOL_DEFS.map((d) => d.id)).size).toBe(TOOL_DEFS.length);
+    for (const a of TOOL_DEFS) for (const b of TOOL_DEFS) if (a !== b) expect(a.bandeja.pos.distanceTo(b.bandeja.pos)).toBeGreaterThan(0.05);
   });
 });

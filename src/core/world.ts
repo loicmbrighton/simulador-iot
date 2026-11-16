@@ -74,33 +74,9 @@ export class World {
     this.wallMat.color = new Color(s.paredes);
   }
 
-  // ------------------------------------------------------------------ colisões simples das mãos
-  /** Empurra um ponto (esfera de raio r) para fora da cabeça, do pescoço e do tronco. */
-  pushOut(p: Vector3, r: number): void {
-    if (this.patient) {
-      const pt = this.patient;
-      const q = p.clone().sub(pt.headCenter);
-      const R = pt.headRadii;
-      const n = Math.hypot(q.x / (R.x + r), q.y / (R.y + r), q.z / (R.z + r));
-      if (n < 1 && n > 1e-6) p.copy(pt.headCenter).add(q.divideScalar(n));
-      const h = pt.coverHeight(p.x, p.z);
-      if (h > -Infinity) p.y = Math.max(p.y, h + r);
-      return;
-    }
-    // Cabeça (elipsoide).
-    const q = p.clone().sub(HEAD_C);
-    const sx = HEAD_R.x + r, sy = HEAD_R.y + r, sz = HEAD_R.z + r;
-    const n = Math.hypot(q.x / sx, q.y / sy, q.z / sz);
-    if (n < 1 && n > 1e-6) p.copy(HEAD_C).add(q.divideScalar(n));
-    // Pescoço (cilindro ao longo de Z).
-    if (p.z > 0.06 && p.z < 0.2) {
-      const c = new Vector3(0, 0.995, p.z);
-      const d = p.clone().sub(c);
-      const len = Math.hypot(d.x, d.y);
-      if (len < 0.055 + r && d.y > -0.05) p.y = Math.max(p.y, c.y + Math.sqrt(Math.max(0, (0.055 + r) ** 2 - d.x * d.x)));
-    }
-    // Tronco (caixa).
-    if (p.z > 0.18 && Math.abs(p.x) < 0.2 + r) p.y = Math.max(p.y, 1.16 + r);
+  /** Elipsoide aproximado da cabeça (para saber se o cursor está sobre ela). */
+  headShape(): { centro: Vector3; raios: Vector3 } {
+    return this.patient ? { centro: this.patient.headCenter, raios: this.patient.headRadii } : { centro: HEAD_C, raios: HEAD_R };
   }
 
   // ------------------------------------------------------------------ construção

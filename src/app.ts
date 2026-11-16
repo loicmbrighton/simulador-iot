@@ -1,52 +1,78 @@
 import {
-  ACESFilmicToneMapping, Clock, Euler, PCFShadowMap, PerspectiveCamera, Plane, PMREMGenerator, Quaternion,
-  Raycaster, Scene, SRGBColorSpace, Vector3, WebGLRenderer,
+  ACESFilmicToneMapping, Box3, Clock, Euler, Matrix4, Object3D, PCFShadowMap, PerspectiveCamera, PMREMGenerator,
+  Quaternion, Raycaster, Scene, SRGBColorSpace, Vector3, WebGLRenderer,
 } from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { DOCTOR, SCENARIOS, SPEED, WORKSPACE, type ControlScheme, type ScenarioId, type Side } from './config';
+import { DOCTOR, LOOK, SCENARIOS, VIEWMODEL, type ScenarioId, type Side } from './config';
 import { World } from './core/world';
 import { downloadPatient, Patient } from './core/patient';
-import { Exercise } from './game/exercise';
+import { Sequencia, type Fase } from './game/anim';
+import { Highlighter } from './game/highlight';
+import { pick, type PickTarget } from './game/picking';
 import { Hand } from './hands/hand';
-import { digitPressed, keyboardHandIntent, leanIntent } from './input/controls';
+import { leanIntent, lookIntent } from './input/controls';
 import { Input } from './input/input';
-import { readyHandQuat, Tool, TOOL_DEFS, TRAY_TOP } from './tools/tools';
+import { gripQuat, readyHandQuat, Tool, TOOL_DEFS, TRAY_SIZE, TRAY_TOP, type ToolId } from './tools/tools';
 import { UI } from './ui/ui';
 
-const HAND_RADIUS = 0.035;
-const GRAB_DIST = 0.13;
-const X = new Vector3(1, 0, 0);
+const SIDES: Side[] = ['left', 'right'];
 const Y = new Vector3(0, 1, 0);
-const Z = new Vector3(0, 0, 1);
+/** Camadas de renderização: mundo (com oclusão) e camada FPS (mãos em repouso, por cima da cena). */
+const LAYER_WORLD = 0;
+const LAYER_FPS = 1;
+/** Mão livre em repouso: palma para baixo, dedos levemente caídos. */
+const Q_LIVRE = new Quaternion().setFromEuler(new Euler(0.35, 0, 0));
+/** Mão sobre a bandeja: palma para baixo, dedos apontando para a direita do médico. */
+const Q_BANDEJA = new Quaternion().setFromAxisAngle(Y, -Math.PI / 2);
+/** Mão que toca o paciente: dedos apontando para baixo e para frente. */
+const Q_TOQUE = new Quaternion().setFromEuler(new Euler(0.8, 0, 0));
 
 type State = 'menu' | 'jogo' | 'pausa';
+interface Pose { pos: Vector3; quat: Quaternion }
+
+/** O que pode estar sob o cursor. */
+export type TargetId = { tipo: 'ferramenta'; tool: Tool } | { tipo: 'bandeja' } | { tipo: 'cabeca' } | { tipo: 'boca' };
+
+export const sideName = (s: Side): string => (s === 'left' ? 'esquerda' : 'direita');
 
 export class App {
   readonly renderer: WebGLRenderer;
   readonly scene = new Scene();
-  readonly camera = new PerspectiveCamera(55, 1, 0.01, 30);
+  readonly camera = new PerspectiveCamera(58, 1, 0.01, 30);
   readonly input: Input;
   readonly world = new World();
   readonly hands: Record<Side, Hand>;
   readonly tools: Tool[];
   readonly ui: UI;
-  readonly exercise: Exercise;
+  readonly highlight = new Highlighter();
 
   state: State = 'menu';
   scenario: ScenarioId = 'easy';
-  scheme: ControlScheme = 'duas-maos';
+  /** Mão que age no clique (Tab alterna). */
   active: Side = 'right';
   elapsed = 0;
+  /** Quadros renderizados (os testes usam para esperar a cena atualizar). */
+  frames = 0;
+  /** Cliques de ação feitos na partida (base da contagem de cliques extras no fim). */
+  clicks = 0;
+  /** Alvo sob o cursor neste quadro. */
+  hover: TargetId | null = null;
+  /** Câmera livre para inspeção (testes/screenshots). null = visão do médico. */
+  debugView: { pos: Vector3; target: Vector3 } | null = null;
 
   private readonly clock = new Clock();
   private readonly raycaster = new Raycaster();
   private readonly lean = new Vector3();
   private yaw = 0;
   private pitch = 0;
-  /** Câmera livre para inspeção (testes/screenshots). null = visão do médico. */
-  debugView: { pos: Vector3; target: Vector3 } | null = null;
-  /** Altura do plano em que o mouse posiciona a mão. */
-  private readonly mouseHeight: Record<Side, number> = { left: 1.2, right: 1.2 };
+  /** Visão do médico (a câmera copia daqui, exceto em `debugView`). */
+  private readonly view = new Object3D();
+  /** Inversa da visão padrão: converte poses "do mundo na visão padrão" em poses presas à câmera. */
+  private readonly nominalInv: Matrix4;
+  private readonly delta = new Matrix4();
+  private readonly deltaQ = new Quaternion();
+  /** Animação em andamento de cada mão (null = em repouso na camada FPS). */
+  private readonly acting: Record<Side, Sequencia | null> = { left: null, right: null };
 
   constructor(private readonly container: HTMLElement) {
     this.renderer = new WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -56,6 +82,7 @@ export class App {
     this.renderer.toneMappingExposure = 1.0;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = PCFShadowMap;
+    this.renderer.autoClear = false;
     const canvas = this.renderer.domElement;
     canvas.tabIndex = 0;
     container.append(canvas);
@@ -65,15 +92,22 @@ export class App {
     this.scene.environmentIntensity = 0.45;
 
     this.input = new Input(canvas);
-    this.scene.add(this.world.group);
+    this.scene.add(this.world.group, this.highlight.ring);
+    // As luzes iluminam as duas camadas (as mãos em repouso são desenhadas numa passada separada).
+    this.scene.traverse((o) => {
+      if ((o as unknown as { isLight?: boolean }).isLight) o.layers.enableAll();
+    });
     this.hands = { left: new Hand('left', this.scene), right: new Hand('right', this.scene) };
     this.tools = TOOL_DEFS.map((d) => new Tool(d));
-    this.exercise = new Exercise(this.exerciseTargets());
-    this.scene.add(this.exercise.group);
 
+    this.view.position.copy(DOCTOR.eye);
+    this.view.lookAt(DOCTOR.lookAt);
+    this.view.rotateY(Math.PI); // Object3D.lookAt aponta +Z; a câmera olha por -Z
+    this.view.updateMatrixWorld();
+    this.nominalInv = this.view.matrixWorld.clone().invert();
 
     this.ui = new UI(container);
-    this.ui.onStart = (c) => this.start(c.scenario, c.scheme);
+    this.ui.onStart = (c) => this.start(c.scenario);
     this.ui.onResume = () => this.resume();
     this.reset();
     this.ui.showMenu(false);
@@ -90,19 +124,6 @@ export class App {
     this.renderer.setAnimationLoop(() => this.frame());
   }
 
-  private exerciseTargets() {
-    const L = this.world.landmarks;
-    const up = (v: Vector3, d: number) => v.clone().add(new Vector3(0, d, 0));
-    return [
-      { nome: 'Centro da boca', pos: up(L.boca, 0.012), mao: 'left' as Side },
-      { nome: 'Comissura labial direita', pos: up(L.comissuraDireita, 0.012), mao: 'right' as Side },
-      { nome: 'Fronte', pos: up(L.fronte, 0.012), mao: 'left' as Side },
-      { nome: 'Mento', pos: up(L.mento, 0.014), mao: 'right' as Side },
-      { nome: 'Comissura labial esquerda', pos: up(L.comissuraEsquerda, 0.012), mao: 'left' as Side },
-      { nome: 'Cartilagem cricoide', pos: up(L.cricoide, 0.03), mao: 'right' as Side },
-    ];
-  }
-
   /** Baixa o paciente real (≈14 MB) em segundo plano; até lá a cena usa o manequim. */
   private async loadPatient(): Promise<void> {
     try {
@@ -110,7 +131,6 @@ export class App {
       this.ui.setPatientStatus('Paciente: preparando…');
       const patient = new Patient(gltf, { mattressTop: 0.92, headTopZ: -0.13 });
       this.world.setPatient(patient);
-      this.exercise.setTargets(this.exerciseTargets());
       this.ui.setPatientStatus('Paciente pronto.');
       if (this.state === 'jogo') this.ui.flash('Paciente carregado');
     } catch (e) {
@@ -120,22 +140,21 @@ export class App {
   }
 
   // ------------------------------------------------------------------ estados
-  start(scenario: ScenarioId, scheme: ControlScheme): void {
+  start(scenario: ScenarioId): void {
     this.scenario = scenario;
-    this.scheme = scheme;
     this.world.applyScenario(SCENARIOS[scenario]);
     this.reset();
-    this.elapsed = 0;
     this.state = 'jogo';
     this.input.enabled = true;
     this.ui.showGame();
-    this.ui.toggleHelp(scheme, true);
+    this.ui.toggleHelp(true);
     this.renderer.domElement.focus();
   }
 
   pause(): void {
     this.state = 'pausa';
     this.input.enabled = false;
+    this.setHover(null);
     this.ui.showMenu(true);
   }
 
@@ -146,21 +165,26 @@ export class App {
     this.renderer.domElement.focus();
   }
 
-  /** Mãos na posição inicial, ferramentas na bandeja, visão centralizada. */
+  /** Mãos livres em repouso, ferramentas na bandeja, visão centralizada. */
   reset(): void {
     for (const t of this.tools) t.placeOnTray(this.world.group);
-    for (const side of ['left', 'right'] as Side[]) {
-      const h = this.hands[side];
-      h.tool = null;
-      h.target.set(side === 'left' ? 0.16 : -0.16, 1.2, -0.2);
-      h.targetQ.setFromEuler(new Euler(0.35, 0, 0));
-      h.snap();
-      this.mouseHeight[side] = 1.2;
-    }
     this.lean.set(0, 0, 0);
     this.yaw = 0;
     this.pitch = 0;
-    if (this.exercise.active) this.exercise.toggle();
+    this.active = 'right';
+    this.elapsed = 0;
+    this.clicks = 0;
+    this.updateView();
+    for (const side of SIDES) {
+      const h = this.hands[side];
+      h.tool = null;
+      h.curlOverride = null;
+      this.acting[side] = null;
+      const rest = this.restPose(side);
+      h.place(rest.pos, rest.quat);
+      h.setLayer(LAYER_FPS);
+    }
+    this.setHover(null);
   }
 
   private resize(): void {
@@ -171,194 +195,327 @@ export class App {
     this.camera.updateProjectionMatrix();
   }
 
-  // ------------------------------------------------------------------ ferramentas
-  equip(side: Side, toolIndex: number): void {
+  // ------------------------------------------------------------------ mãos: repouso e ações
+  busy(side: Side): boolean {
+    return this.acting[side] !== null;
+  }
+
+  /** Pose de repouso da mão, presa à câmera (parte de baixo da tela), segurando o instrumento atual. */
+  private restPose(side: Side): Pose {
+    const h = this.hands[side];
+    const pos = VIEWMODEL.rest[side].clone();
+    if (side === this.active) pos.add(VIEWMODEL.activeLift);
+    const quat = h.tool ? readyHandQuat(h.tool.def, side) : Q_LIVRE.clone();
+    return { pos: pos.applyMatrix4(this.delta), quat: quat.premultiply(this.deltaQ) };
+  }
+
+  /** Inicia uma animação no mundo: a mão sai da camada FPS e volta a ela no fim. */
+  private act(side: Side, fases: Fase[]): void {
+    const hand = this.hands[side];
+    hand.setLayer(LAYER_WORLD);
+    this.acting[side] = new Sequencia(fases);
+  }
+
+  /** Fase que leva a mão da pose atual até `destino` (reavaliado a cada quadro). */
+  private ir(side: Side, destino: () => Pose, dur: number, extra: Omit<Fase, 'dur'> = {}): Fase {
+    const hand = this.hands[side];
+    const p0 = new Vector3();
+    const q0 = new Quaternion();
+    return {
+      dur,
+      inicio: () => {
+        p0.copy(hand.root.position);
+        q0.copy(hand.root.quaternion);
+        extra.inicio?.();
+      },
+      update: (t) => {
+        const d = destino();
+        hand.root.position.lerpVectors(p0, d.pos, t);
+        hand.root.quaternion.slerpQuaternions(q0, d.quat, t);
+        extra.update?.(t);
+      },
+      fim: extra.fim,
+    };
+  }
+
+  /** Pega um instrumento da bandeja: a mão vai até ele, fecha, acomoda na empunhadura e volta para a tela. */
+  pickUp(side: Side, tool: Tool): void {
+    const hand = this.hands[side];
+    if (hand.tool || tool.holder || this.busy(side)) return;
+    tool.holder = side; // reservado: deixa de ser clicável
+    const grab = tool.gripWorld().add(new Vector3(0, 0.02, 0));
+    const above = grab.clone().add(new Vector3(0, 0.1, 0));
+    const p0 = new Vector3();
+    const q0 = new Quaternion();
+    const grip = gripQuat(side);
+    hand.curlOverride = 0;
+    this.act(side, [
+      this.ir(side, () => ({ pos: above, quat: Q_BANDEJA }), 0.5),
+      this.ir(side, () => ({ pos: grab, quat: Q_BANDEJA }), 0.22),
+      this.ir(side, () => ({ pos: above, quat: Q_BANDEJA }), 0.35, {
+        inicio: () => {
+          hand.tool = tool;
+          hand.curlOverride = null;
+          tool.attachTo(hand.anchor, side, true);
+          p0.copy(tool.object.position);
+          q0.copy(tool.object.quaternion);
+        },
+        update: (t) => {
+          tool.object.position.copy(p0).multiplyScalar(1 - t);
+          tool.object.quaternion.slerpQuaternions(q0, grip, t);
+        },
+        fim: () => this.ui.flash(`Mão ${sideName(side)}: ${tool.def.nome}`),
+      }),
+      this.ir(side, () => this.restPose(side), 0.55),
+    ]);
+  }
+
+  /** Devolve à bandeja o instrumento que a mão segura. */
+  putBack(side: Side): void {
+    const hand = this.hands[side];
+    const tool = hand.tool;
+    if (!tool || this.busy(side)) return;
+    const slot = tool.trayPose();
+    const drop = slot.pos.clone().add(new Vector3(0, 0.02, 0));
+    const above = drop.clone().add(new Vector3(0, 0.1, 0));
+    const p0 = new Vector3();
+    const q0 = new Quaternion();
+    this.act(side, [
+      this.ir(side, () => ({ pos: above, quat: Q_BANDEJA }), 0.55),
+      this.ir(side, () => ({ pos: drop, quat: Q_BANDEJA }), 0.25, {
+        inicio: () => {
+          this.world.group.attach(tool.object);
+          tool.setLight(false);
+          hand.tool = null;
+          hand.curlOverride = 0;
+          p0.copy(tool.object.position);
+          q0.copy(tool.object.quaternion);
+        },
+        update: (t) => {
+          tool.object.position.lerpVectors(p0, slot.pos, t);
+          tool.object.quaternion.slerpQuaternions(q0, slot.quat, t);
+        },
+        fim: () => tool.placeOnTray(this.world.group),
+      }),
+      this.ir(side, () => this.restPose(side), 0.55, { fim: () => (hand.curlOverride = null) }),
+    ]);
+  }
+
+  /** Leva a ponta do dedo (ou do instrumento) até um ponto do mundo e volta. `aoTocar` roda no contato. */
+  touch(side: Side, ponto: Vector3, aoTocar?: () => void): void {
+    const hand = this.hands[side];
+    if (this.busy(side)) return;
+    hand.root.updateMatrixWorld(true);
+    const tipLocal = hand.root.worldToLocal(hand.tipWorld());
+    const quat = hand.tool ? readyHandQuat(hand.tool.def, side) : Q_TOQUE.clone();
+    const pos = ponto.clone().sub(tipLocal.applyQuaternion(quat));
+    const pre = pos.clone().add(new Vector3(0, 0.06, -0.04));
+    this.act(side, [
+      this.ir(side, () => ({ pos: pre, quat }), 0.5),
+      this.ir(side, () => ({ pos, quat }), 0.22, { fim: aoTocar }),
+      { dur: 0.3 },
+      this.ir(side, () => this.restPose(side), 0.55),
+    ]);
+  }
+
+  /** Coloca (ou tira, com null) um instrumento na mão instantaneamente. Para testes e depuração. */
+  equip(side: Side, id: ToolId | null): void {
     const hand = this.hands[side];
     if (hand.tool) {
       hand.tool.placeOnTray(this.world.group);
       hand.tool = null;
     }
-    if (toolIndex === 0) return;
-    const tool = this.tools.find((t) => t.def.tecla === toolIndex);
-    if (!tool) return;
-    const other = this.hands[side === 'left' ? 'right' : 'left'];
-    if (other.tool === tool) other.tool = null;
-    hand.tool = tool;
-    tool.attachTo(hand.anchor, side);
-    hand.targetQ.copy(readyHandQuat(tool.def, side));
-    this.ui.flash(`${side === 'left' ? 'Mão esquerda' : 'Mão direita'}: ${tool.def.nome}`);
+    const tool = id ? this.tools.find((t) => t.def.id === id) : null;
+    if (tool) {
+      const other = this.hands[side === 'left' ? 'right' : 'left'];
+      if (other.tool === tool) other.tool = null;
+      hand.tool = tool;
+      tool.attachTo(hand.anchor, side);
+    }
+    hand.setLayer(this.busy(side) ? LAYER_WORLD : LAYER_FPS);
   }
 
-  /** Pegar da bandeja a ferramenta mais próxima, ou devolver a que está na mão. */
-  grabOrRelease(side: Side): void {
-    const hand = this.hands[side];
-    const p = hand.root.position;
-    if (hand.tool) {
-      if (p.distanceTo(TRAY_TOP) < 0.3 && p.y < TRAY_TOP.y + 0.2) {
-        hand.tool.placeOnTray(this.world.group);
-        hand.tool = null;
-      } else {
-        this.ui.flash('Leve a mão até a bandeja para devolver');
+  // ------------------------------------------------------------------ cursor: alvos, dica e clique
+  /** Alvos clicáveis no estado atual (o raycaster já deve estar apontado para o cursor). */
+  private targets(): PickTarget<TargetId>[] {
+    const list: PickTarget<TargetId>[] = [];
+    if (this.hands[this.active].tool) {
+      // Mão ocupada: a bandeja inteira serve para devolver o instrumento.
+      const h = new Vector3(TRAY_SIZE.x / 2, 0, TRAY_SIZE.z / 2);
+      const caixa = new Box3(TRAY_TOP.clone().sub(h).setY(TRAY_TOP.y - 0.03), TRAY_TOP.clone().add(h).setY(TRAY_TOP.y + 0.08));
+      list.push({ id: { tipo: 'bandeja' }, prioridade: 2, forma: { tipo: 'caixa', caixa } });
+    } else {
+      // Mão livre: instrumentos na bandeja. Acertar a malha vale mais que acertar só a caixa envolvente
+      // (folga para peças finas), o que evita que a caixa de uma peça grande cubra as vizinhas.
+      for (const tool of this.tools) {
+        if (tool.holder) continue;
+        const caixa = new Box3().setFromObject(tool.object).expandByScalar(0.01);
+        const exato = this.raycaster.intersectObject(tool.object, true).length > 0;
+        list.push({ id: { tipo: 'ferramenta', tool }, prioridade: exato ? 4 : 2, forma: { tipo: 'caixa', caixa } });
       }
+    }
+    const head = this.world.headShape();
+    list.push({ id: { tipo: 'cabeca' }, prioridade: 1, forma: { tipo: 'elipsoide', centro: head.centro, raios: head.raios } });
+    list.push({ id: { tipo: 'boca' }, prioridade: 3, forma: { tipo: 'esfera', centro: this.world.landmarks.boca, raio: 0.026 } });
+    return list;
+  }
+
+  /** Texto da dica para o alvo sob o cursor, considerando a mão ativa. */
+  hint(t: TargetId): string {
+    const held = this.hands[this.active].tool;
+    const mao = `mão ${sideName(this.active)}`;
+    switch (t.tipo) {
+      case 'ferramenta':
+        return `Clique: pegar ${t.tool.def.nome} com a ${mao}`;
+      case 'bandeja':
+        return `Clique: devolver ${held!.def.nome} à bandeja`;
+      case 'cabeca':
+        return held ? 'Cabeça do paciente' : 'Clique: posicionar a cabeça';
+      case 'boca':
+        if (!held) return 'Clique: abrir a boca';
+        return held.def.id === 'laringoscopio' ? 'Clique: inserir o laringoscópio' : 'Boca do paciente';
+    }
+  }
+
+  private setHover(t: TargetId | null): void {
+    this.hover = t;
+    this.highlight.object(t?.tipo === 'ferramenta' ? t.tool.object : null);
+    if (t?.tipo === 'cabeca') this.highlight.zone(this.world.landmarks.fronte, 0.045);
+    else if (t?.tipo === 'boca') this.highlight.zone(this.world.landmarks.boca, 0.026);
+    else this.highlight.zone(null);
+    this.renderer.domElement.style.cursor = t ? 'pointer' : 'default';
+    this.ui.setHint(t ? this.hint(t) : null, this.input.pointer);
+  }
+
+  private updateHover(): void {
+    const inp = this.input;
+    if (!inp.pointerInside || inp.looking || this.busy(this.active)) {
+      this.setHover(null);
       return;
     }
-    let best: Tool | null = null;
-    let bestD = GRAB_DIST;
-    const tmp = new Vector3();
-    for (const t of this.tools) {
-      if (t.holder) continue;
-      const d = t.gripWorld(tmp).distanceTo(p);
-      if (d < bestD) {
-        best = t;
-        bestD = d;
-      }
+    this.raycaster.setFromCamera(inp.pointer, this.camera);
+    this.setHover(pick(this.raycaster.ray, this.targets())?.id ?? null);
+  }
+
+  /** Clique: age com a mão ativa sobre o alvo. No Modo Easy, erro só gera uma dica neutra. */
+  click(t: TargetId): void {
+    const side = this.active;
+    this.clicks++;
+    switch (t.tipo) {
+      case 'ferramenta':
+        this.pickUp(side, t.tool);
+        break;
+      case 'bandeja':
+        this.putBack(side);
+        break;
+      case 'cabeca':
+        // As animações das etapas (posição olfativa, abertura da boca, laringoscopia) entram na etapa 2 da implementação.
+        this.touch(side, this.world.landmarks.fronte);
+        break;
+      case 'boca':
+        this.touch(side, this.world.landmarks.boca);
+        break;
     }
-    if (best) this.equip(side, best.def.tecla);
-    else this.ui.flash('Nenhuma ferramenta ao alcance');
   }
 
   // ------------------------------------------------------------------ loop
   private frame(): void {
     const dt = Math.min(this.clock.getDelta(), 0.05);
-    if (this.state === 'jogo') this.updateGame(dt);
+    if (this.state === 'jogo') this.updateInput(dt);
+    this.updateView();
+    this.updateHands(dt);
     this.updateCamera();
-    for (const side of ['left', 'right'] as Side[]) {
-      this.hands[side].update(dt, DOCTOR.shoulder[side].clone().add(this.lean));
+    if (this.state === 'jogo') {
+      this.updateHover();
+      if (this.input.clicked.has(0) && this.hover) this.click(this.hover);
+      this.ui.updateHud({
+        scenario: this.scenario, active: this.active, elapsed: this.elapsed,
+        tools: { left: this.hands.left.tool?.def.nome ?? null, right: this.hands.right.tool?.def.nome ?? null },
+      });
     }
+    this.highlight.update(dt, this.camera.position);
     this.world.update(dt);
+
+    // Passada 1: mundo. Passada 2: camada FPS, com a profundidade limpa (as mãos em repouso nunca atravessam a cena).
+    this.renderer.clear();
+    this.camera.layers.set(LAYER_WORLD);
+    this.renderer.render(this.scene, this.camera);
+    this.renderer.clearDepth();
+    this.camera.layers.set(LAYER_FPS);
     this.renderer.render(this.scene, this.camera);
     this.input.endFrame();
+    this.frames++;
+  }
+
+  private updateInput(dt: number): void {
+    const inp = this.input;
+    this.elapsed += dt;
+    if (inp.pressed.has('KeyH')) this.ui.toggleHelp();
+    if (inp.pressed.has('Tab')) this.active = this.active === 'left' ? 'right' : 'left';
+    if (inp.pressed.has('KeyX')) {
+      this.lean.set(0, 0, 0);
+      this.yaw = this.pitch = 0;
+    }
+    // Olhar em volta (WASD ou botão direito) e inclinar o corpo (setas).
+    const look = lookIntent((c) => inp.down(c)).multiplyScalar(LOOK.keys * dt);
+    if (inp.looking) look.set(look.x - inp.mouseDelta.x * LOOK.mouse, look.y - inp.mouseDelta.y * LOOK.mouse);
+    this.yaw = clamp(this.yaw + look.x, -LOOK.yawMax, LOOK.yawMax);
+    this.pitch = clamp(this.pitch + look.y, LOOK.pitchMin, LOOK.pitchMax);
+    const lean = leanIntent((c) => inp.down(c)).multiplyScalar(LOOK.lean * dt);
+    this.lean.add(lean).clamp(DOCTOR.leanMax.clone().negate(), DOCTOR.leanMax);
+  }
+
+  /** Visão do médico e a transformação que prende as mãos em repouso a ela. */
+  private updateView(): void {
+    const eye = DOCTOR.eye.clone().add(this.lean);
+    const dir = DOCTOR.lookAt.clone().sub(DOCTOR.eye).normalize();
+    dir.applyAxisAngle(Y, this.yaw);
+    const side = dir.clone().cross(Y).normalize();
+    dir.applyAxisAngle(side, this.pitch);
+    this.view.position.copy(eye);
+    this.view.lookAt(eye.clone().add(dir));
+    this.view.rotateY(Math.PI);
+    this.view.updateMatrixWorld();
+    this.delta.multiplyMatrices(this.view.matrixWorld, this.nominalInv);
+    this.deltaQ.setFromRotationMatrix(this.delta);
   }
 
   private updateCamera(): void {
     if (this.debugView) {
       this.camera.position.copy(this.debugView.pos);
       this.camera.lookAt(this.debugView.target);
-      this.camera.updateMatrixWorld();
-      return;
+    } else {
+      this.camera.position.copy(this.view.position);
+      this.camera.quaternion.copy(this.view.quaternion);
     }
-    const eye = DOCTOR.eye.clone().add(this.lean);
-    const dir = DOCTOR.lookAt.clone().sub(DOCTOR.eye).normalize();
-    dir.applyAxisAngle(Y, this.yaw);
-    const side = dir.clone().cross(Y).normalize();
-    dir.applyAxisAngle(side, this.pitch);
-    this.camera.position.copy(eye);
-    this.camera.lookAt(eye.clone().add(dir));
     this.camera.updateMatrixWorld();
   }
 
-  private updateGame(dt: number): void {
-    const inp = this.input;
-    this.elapsed += dt;
-
-    // Atalhos gerais.
-    if (inp.pressed.has('KeyH')) this.ui.toggleHelp(this.scheme);
-    if (inp.pressed.has('KeyV')) {
-      this.scheme = this.scheme === 'duas-maos' ? 'mao-ativa' : 'duas-maos';
-      this.ui.flash(`Esquema: ${this.scheme === 'duas-maos' ? 'Duas mãos' : 'Mão ativa'}`);
-      this.ui.renderHelp(this.scheme);
-    }
-    if (inp.pressed.has('KeyT')) this.exercise.toggle();
-    if (inp.pressed.has('KeyX')) {
-      this.lean.set(0, 0, 0);
-      this.yaw = this.pitch = 0;
-      for (const side of ['left', 'right'] as Side[]) {
-        const h = this.hands[side];
-        h.target.set(side === 'left' ? 0.16 : -0.16, 1.2, -0.2);
-        this.mouseHeight[side] = 1.2;
-        h.targetQ.copy(h.tool ? readyHandQuat(h.tool.def, side) : new Quaternion().setFromEuler(new Euler(0.35, 0, 0)));
+  private updateHands(dt: number): void {
+    const reach = (DOCTOR.upperArm + DOCTOR.forearm) * 0.96;
+    for (const side of SIDES) {
+      const hand = this.hands[side];
+      const seq = this.acting[side];
+      if (seq) {
+        if (seq.update(dt)) {
+          this.acting[side] = null;
+          hand.setLayer(LAYER_FPS);
+        }
+      } else {
+        const rest = this.restPose(side);
+        const k = 1 - Math.exp(-VIEWMODEL.follow * dt);
+        hand.root.position.lerp(rest.pos, k);
+        hand.root.quaternion.slerp(rest.quat, k);
       }
-    }
-    if (this.scheme === 'mao-ativa' && inp.pressed.has('Tab')) {
-      this.active = this.active === 'left' ? 'right' : 'left';
-      this.mouseHeight[this.active] = this.hands[this.active].target.y;
-    }
-
-    // Ferramentas por tecla.
-    const digit = digitPressed(inp.pressed);
-    if (digit !== null) {
-      const side: Side = this.scheme === 'duas-maos' ? (inp.shift ? 'left' : 'right') : this.active;
-      this.equip(side, digit);
-    }
-
-    // Olhar em volta (botão direito) e inclinar o corpo (setas).
-    if (inp.looking) {
-      this.yaw = clamp(this.yaw - inp.mouseDelta.x * 0.004, -1.2, 1.2);
-      this.pitch = clamp(this.pitch - inp.mouseDelta.y * 0.004, -0.6, 0.7);
-    }
-    const lean = leanIntent((c) => inp.down(c)).multiplyScalar(0.25 * dt);
-    this.lean.add(lean).clamp(DOCTOR.leanMax.clone().negate(), DOCTOR.leanMax);
-
-    // Mão controlada pelo mouse.
-    const mouseSide: Side = this.scheme === 'duas-maos' ? 'right' : this.active;
-    this.updateMouseHand(mouseSide);
-    if (inp.clicked.has(0)) this.grabOrRelease(mouseSide);
-
-    // Mão esquerda pelo teclado (só no esquema "duas mãos").
-    if (this.scheme === 'duas-maos') {
-      this.updateKeyboardHand('left', dt);
-      if (inp.pressed.has('KeyG')) this.grabOrRelease('left');
-    }
-
-    // Restrições físicas simples.
-    for (const side of ['left', 'right'] as Side[]) {
-      const t = this.hands[side].target;
-      t.clamp(WORKSPACE.min, WORKSPACE.max);
-      this.world.pushOut(t, HAND_RADIUS);
-    }
-
-    // Exercício.
-    if (this.exercise.active) {
-      const tips = { left: this.hands.left.tipWorld(), right: this.hands.right.tipWorld() };
-      if (this.exercise.update(dt, tips, this.camera.position)) this.ui.flash('Alvo atingido!');
-    }
-    const cur = this.exercise.current;
-    this.ui.updateExercise({
-      active: this.exercise.active, index: this.exercise.index, total: this.exercise.total,
-      nome: cur?.nome, mao: cur?.mao, elapsed: this.exercise.elapsed, finished: this.exercise.finishedTime,
-    });
-    this.ui.updateHud({
-      scenario: this.scenario, scheme: this.scheme, active: this.active, elapsed: this.elapsed,
-      tools: { left: this.hands.left.tool?.def.nome ?? null, right: this.hands.right.tool?.def.nome ?? null },
-      outOfReach: { left: this.hands.left.outOfReach, right: this.hands.right.outOfReach },
-    });
-  }
-
-  private updateMouseHand(side: Side): void {
-    const inp = this.input;
-    const hand = this.hands[side];
-    if (inp.down('Space')) {
-      // Rotação em eixos do mundo: arrastar na vertical inclina, na horizontal gira; roda = rola.
-      const dq = new Quaternion()
-        .setFromAxisAngle(X, inp.mouseDelta.y * SPEED.mouseRotate)
-        .multiply(new Quaternion().setFromAxisAngle(Y, -inp.mouseDelta.x * SPEED.mouseRotate))
-        .multiply(new Quaternion().setFromAxisAngle(Z, inp.wheel * 0.002));
-      hand.targetQ.premultiply(dq).normalize();
-      return;
-    }
-    this.mouseHeight[side] = clamp(this.mouseHeight[side] - inp.wheel * SPEED.wheelHeight, WORKSPACE.min.y, WORKSPACE.max.y);
-    if (inp.looking || !inp.pointerInside) {
-      hand.target.y = this.mouseHeight[side];
-      return;
-    }
-    this.raycaster.setFromCamera(inp.pointer, this.camera);
-    const plane = new Plane(new Vector3(0, 1, 0), -this.mouseHeight[side]);
-    const hit = this.raycaster.ray.intersectPlane(plane, new Vector3());
-    if (hit) hand.target.copy(hit);
-  }
-
-  private updateKeyboardHand(side: Side, dt: number): void {
-    const inp = this.input;
-    const hand = this.hands[side];
-    const intent = keyboardHandIntent((c) => inp.down(c));
-    const speed = SPEED.leftHand * (inp.shift ? SPEED.precisionFactor : 1);
-    hand.target.addScaledVector(intent.move, speed * dt);
-    const rot = SPEED.rotate * (inp.shift ? SPEED.precisionFactor : 1) * dt;
-    if (intent.tilt || intent.roll) {
-      const dq = new Quaternion()
-        .setFromAxisAngle(X, intent.tilt * rot)
-        .multiply(new Quaternion().setFromAxisAngle(Z, intent.roll * rot));
-      hand.targetQ.premultiply(dq).normalize();
+      // Ombro preso à câmera (fora da tela). Se o alvo está além do alcance (bandeja), o cotovelo é resolvido
+      // com um ombro adiantado e a manga é desenhada desde o ombro real: o braço alonga em vez de aparecer solto.
+      const origin = DOCTOR.shoulder[side].clone().applyMatrix4(this.delta);
+      const shoulder = origin.clone();
+      const to = hand.root.position.clone().sub(shoulder);
+      const d = to.length();
+      if (d > reach) shoulder.addScaledVector(to, (d - reach) / d);
+      const pole = new Vector3(side === 'left' ? 0.45 : -0.45, -0.5, -0.15).applyQuaternion(this.deltaQ).add(shoulder);
+      hand.update(dt, shoulder, pole, origin);
     }
   }
 }
