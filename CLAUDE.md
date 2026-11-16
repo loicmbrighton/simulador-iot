@@ -28,6 +28,11 @@ Idioma do projeto, da interface e da documentação: **português (Brasil)**.
 - **Diretrizes:** Walls (SRI na emergência), DAS 2015 (eletiva e via aérea falha), PreVent 2019
   (BVM durante a SRI). Pontos controversos ficam configuráveis.
 
+## Foco atual: Modo Easy point-and-click
+**Leia `docs/MODO_EASY.md` antes de qualquer trabalho.** Resumo: só o Modo Easy por enquanto; mãos em camada
+FPS (modelo híbrido); usuário só pega instrumentos e clica no lugar certo; animações automáticas; Tab troca a
+mão ativa; sequência correta de 10 etapas definida lá. Sequência Rápida e Eletiva em standby.
+
 ## Anatomia (Z-Anatomy)
 Pipeline em `tools/anatomia/`:
 1. `./baixar_z_anatomy.sh`: baixa o atlas e cria um venv com `bpy` (Blender como módulo Python) em `.cache/`.
