@@ -109,15 +109,25 @@ src/
   empunhado e a mão sobe (`App.swap`). A mão só passa para a camada 0 (mundo, com oclusão e sombra) quando
   mexe no paciente (`App.act(..., true)`) ou num corte de câmera. `pin[lado]` prende a mão a uma pose do
   mundo recalculada a cada quadro (ex.: a esquerda segurando o laringoscópio na boca).
+- **Movimento das mãos:** `App.caminho(lado, pontos)` gera a trajetória (velocidade contínua nos pontos com
+  `passa`, mínimo jerk entre paradas, arco, rotação adiantada); `ir` é o caso de um ponto só e `seguir` prende
+  a mão a uma pose que se move. Não voltar a encadear interpolações lineares: foi o que deixou as mãos
+  "mecânicas". Curvas em `src/game/anim.ts` (`minJerk`, `hermite`).
 - **Câmera (`App.mode`):** `medico` (visão padrão), `lateral` (corte do coxim/posição olfativa, `SHOTS.lateral`)
-  e `interna` (dentro da faringe, no eixo da laringe, olhando a glote; `Patient.glottisFrame`). `App.cut` é a
-  `Sequencia` do corte e bloqueia os comandos enquanto roda.
+  e `interna` (visão pela boca na laringoscopia, `SHOTS.interna`). `App.cut` é a `Sequencia` do corte e
+  bloqueia os comandos enquanto roda; `ui.blink()` escurece a tela na troca.
 - **Paciente:** `applyPose` só mexe em ossos e no morph (pode rodar todo quadro). `flex` (pescoço) e `ext`
-  (cabeça) vão de 0 (neutra, cabeça no colchão) a 1 (olfativa sobre o coxim). A medição cara (`layout`) roda
-  uma vez. Abaixo da cricoide os pesos da traqueia passam para o tórax (`anchorTrachea`).
+  (cabeça) vão de 0 (neutra, cabeça no colchão) a 1 (olfativa sobre o coxim); `ext` > 1 = extensão extra da
+  laringoscopia. A medição cara (`layout`) roda uma vez. Abaixo da cricoide os pesos da traqueia passam para o
+  tórax (`anchorTrachea`). `incisor()`, `nuca()`, `airLandmark()` e `glottisFrame()` dão pontos vivos.
 - **Laringoscópio:** o modelo é espelhado em X e empunhado com o cabo para cima e a lâmina embaixo (uso real;
-  a flange fica à esquerda do operador). `App.scopePose(u, lift)` calcula a pose ao longo da inserção a partir
-  dos lábios e da valécula (landmarks vivos).
+  a flange fica à esquerda do operador). `App.prepareSight` calcula a linha de visão (incisivos superiores →
+  entre a glote e a entrada do esôfago), a pose final da lâmina e a deformação dos tecidos
+  (`Patient.deformTissue`, ligada por `pose.tongue`); `App.scopePose(u, lift)` dá a pose ao longo da inserção.
+  Constantes em `VISAO` (app.ts). A deformação tem de empurrar a língua toda para o mesmo lado (anterior):
+  empurrar radialmente fecha o canal com uma parede de triângulos esticados.
+- **Depuração visual:** `debugSection(x)` corta a cena num plano sagital e `debugMarks(pontos)` marca pontos;
+  foi o que permitiu acertar a laringoscopia (olhar o corte, não adivinhar).
 - **Controles:** mouse aponta (destaque + dica), clique age com a mão ativa, Tab troca a mão ativa,
   WASD ou botão direito olham em volta, setas inclinam o corpo, X recentraliza, H ajuda, Esc pausa
   (na visão interna, Esc desfaz a laringoscopia).
@@ -127,7 +137,8 @@ src/
 - A página publicada bloqueia fetch de `data:`/`blob:`: o glTF é baixado por fetch relativo e montado como
   .glb em memória (`downloadPatient`); publicar `pagina.html` com `paciente.json` como arquivo de apoio.
 - `window.__sim` expõe o App para testes e depuração: `debugView` (câmera livre), `frames` (contador de
-  quadros), `timeScale` (acelera as animações), `animating`, `equip(lado, id)`, `click({ tipo })`.
+  quadros), `timeScale` (acelera as animações), `animating`, `equip(lado, id)`, `click({ tipo })`,
+  `debugSection`, `debugMarks`.
 - O renderizador por software dos testes é muito lento na visão interna (a malha da via aérea cobre a tela):
   esperar por quadros/estado, não por tempo, e usar timeouts longos.
 

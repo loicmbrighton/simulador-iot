@@ -33,11 +33,15 @@ laringoscópio já montado. O paciente começa com a cabeça em posição **neut
 | 2 | a do coxim | Clicar na cabeça | **Corte para a vista lateral**: a cabeça é erguida, o coxim desliza sob o occipício, a cabeça é estendida (posição olfativa); legenda explica; volta à visão do médico |
 | 3 | esquerda | Pegar o laringoscópio | Aparece na mão; a luz da lâmina acende |
 | 4 | direita, livre | Clicar na boca | Mão vai à boca (gesto de tesoura) e a mandíbula abre |
-| 5 | esquerda | Clicar na boca com o laringoscópio | Lâmina entra pela direita, língua rebatida para a esquerda (animação simples), ponta na valécula, tração no eixo do cabo; **corte para a visão de dentro da boca** (glote) |
+| 5 | esquerda | Clicar na boca com o laringoscópio | Lâmina entra pela direita, língua comprimida contra a lâmina (animação simples), ponta na valécula, cabeça um pouco mais estendida, tração no eixo do cabo; **corte para a visão pela boca** |
 
-Na **visão interna**: a mão esquerda segura o laringoscópio; a mão direita troca de instrumento por uma
-**roda de seleção** na tela (tubo, aspirador, seringa, AMBU; centro = soltar). **Esc** sai dessa visão e
-desfaz a laringoscopia (a lâmina sai, a boca continua aberta). Fora da visão interna, Esc pausa.
+**Visão pela boca** (decisão do usuário: não tão aproximada, e mostrando o esôfago): a câmera fica dentro da
+boca, sobre a linha que vai da borda dos incisivos superiores à laringe, a cerca de 11 cm da glote. Aparecem
+a lâmina (em cima), a glote com as aritenoides e, atrás delas, a hipofaringe com a **entrada do esôfago**
+(escurecida para se ler como abertura). A ideia é que, na etapa do tubo, o usuário possa errar e intubar o
+esôfago. A mão esquerda segura o laringoscópio; a mão direita troca de instrumento por uma **roda de
+seleção** na tela (tubo, aspirador, seringa, AMBU; centro = soltar). **Esc** sai dessa visão e desfaz a
+laringoscopia (a lâmina sai, a boca continua aberta). Fora dela, Esc pausa.
 
 As etapas seguintes (passar o tubo, fio-guia, retirar o laringoscópio, cuff, AMBU/ventilação e confirmação)
 **ainda não têm o visual decidido**: refinar bem as etapas 1 a 5 antes de seguir.
@@ -59,13 +63,30 @@ As etapas seguintes (passar o tubo, fio-guia, retirar o laringoscópio, cuff, AM
 3. Etapas seguintes (tubo em diante): aguardando o usuário decidir o visual.
 4. Publicar na página de teste a cada entrega (`npm run build:artifact`; ver `CLAUDE.md`).
 
+## Mãos: como deixar o movimento menos mecânico
+Queixa do usuário: as animações das mãos (coxim, laringoscópio etc.) estavam feias e mecânicas. Frentes:
+1. **Movimento procedural melhor (feito):** trajetórias contínuas por pontos de passagem (`App.caminho`), perfil
+   de mínimo jerk entre paradas, leve arco no percurso, rotação que se adianta à posição, dedos que fecham em
+   sequência, balanço de respiração em repouso, o médico se debruça enquanto age, cabeça do paciente reage, e
+   os cortes de câmera têm um escurecimento rápido. A coreografia do coxim foi refeita (uma mão ergue a cabeça
+   pelo occipício, a outra desliza o coxim, depois a mão vai à fronte e estende a cabeça).
+2. **Mãos de verdade (proposto, não feito):** trocar as mãos de cápsulas por uma malha com esqueleto (dá para
+   gerar do MakeHuman, CC0, como o paciente), com poses de dedos por instrumento. É o maior ganho visual.
+3. **Gestos gravados (proposto, não feito):** o usuário faz os gestos diante da webcam (rastreamento de mãos no
+   navegador) e eles viram as animações. É o caminho mais fiel à técnica real.
+
 ## Estado atual
 - Etapas 1 a 5 funcionando de ponta a ponta (`tools/screenshots.mjs` percorre tudo com mouse e teclado e
   confere o estado a cada passo). Detalhes técnicos no `CLAUDE.md`, seção "Código".
-- **O que ainda é simples e pode ser refinado:** a mão que abre a boca (gesto de tesoura aproximado); as mãos
-  no corte lateral (uma na lateral da cabeça, outra empurrando o coxim); a língua (morph que desloca a
-  língua para a esquerda e a afunda, sem física); a lâmina na visão interna (aparece só a ponta, no topo).
+- **Laringoscopia (geometria):** no modelo, a linha dos incisivos superiores à glote atravessa a base da língua
+  e a epiglote. `App.prepareSight` calcula essa linha, posiciona a lâmina anterior a ela e deforma os tecidos
+  moles: língua e parede anterior da faringe são comprimidas contra a lâmina, a epiglote dobra pela base e o
+  palato mole cede para trás. Para a linha passar entre os dentes a cabeça estende mais um pouco (`EXT_LAMINA`).
+- **Posição olfativa:** os ângulos foram aumentados para a face ficar ~13° estendida (antes ficava horizontal).
+  Conferir com o usuário se o resultado no corte lateral está de acordo.
 - A posição neutra é achada por busca (extensão do pescoço até o occipício tocar o colchão). A via aérea fica
   oculta fora da posição olfativa, porque nas poses extremas ela não acompanha a pele do pescoço.
 - Sinais vitais são didáticos (não há modelo fisiológico): cada erro soma `VITALS.erro`.
+- **Ainda simples:** mãos de cápsulas (ver acima); gesto de tesoura aproximado; a mucosa esticada pela lâmina
+  não tem física; a entrada do esôfago é só um funil escuro atrás das aritenoides (está colapsada na malha).
 - Ainda aguardando o retorno do usuário sobre a anatomia da visão laringoscópica (visualizador publicado).
