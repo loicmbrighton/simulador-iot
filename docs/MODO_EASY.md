@@ -36,10 +36,14 @@ laringoscópio já montado. O paciente começa com a cabeça em posição **neut
 | 5 | esquerda | Clicar na boca com o laringoscópio | Lâmina entra pela direita, língua comprimida contra a lâmina (animação simples), ponta na valécula, cabeça um pouco mais estendida, tração no eixo do cabo; **corte para a visão pela boca** |
 
 **Visão pela boca** (decisão do usuário: não tão aproximada, e mostrando o esôfago): a câmera fica dentro da
-boca, sobre a linha que vai da borda dos incisivos superiores à laringe, a cerca de 11 cm da glote. Aparecem
-a lâmina (em cima), a glote com as aritenoides e, atrás delas, a hipofaringe com a **entrada do esôfago**
-(escurecida para se ler como abertura). A ideia é que, na etapa do tubo, o usuário possa errar e intubar o
-esôfago. A mão esquerda segura o laringoscópio; a mão direita troca de instrumento por uma **roda de
+boca, sobre a linha que vai da borda dos incisivos superiores até um ponto entre a glote e a parede posterior da
+hipofaringe, a cerca de 15 cm da laringe. Na imagem (anterior para cima): a lâmina em cima, a glote, as
+aritenoides e, logo abaixo delas, a **entrada do esôfago** como uma abertura escura. A lâmina traciona a
+laringe para a frente, o que abre o espaço atrás das aritenoides. Como na malha o esôfago é colapsado (uma
+fenda que de longe não se lê como abertura), a entrada é reforçada por uma marca escura (`esophagusMark`,
+posicionada por raios da câmera em `App.findEsophagus`). A periferia é escurecida como o campo visto através
+da boca aberta (`ui.setScopeView`). A ideia é que, na etapa do tubo, o usuário possa errar e intubar o esôfago.
+A mão esquerda segura o laringoscópio; a mão direita troca de instrumento por uma **roda de
 seleção** na tela (tubo, aspirador, seringa, AMBU; centro = soltar). **Esc** sai dessa visão e desfaz a
 laringoscopia (a lâmina sai, a boca continua aberta). Fora dela, Esc pausa.
 

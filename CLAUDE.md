@@ -125,7 +125,10 @@ src/
   entre a glote e a entrada do esôfago), a pose final da lâmina e a deformação dos tecidos
   (`Patient.deformTissue`, ligada por `pose.tongue`); `App.scopePose(u, lift)` dá a pose ao longo da inserção.
   Constantes em `VISAO` (app.ts). A deformação tem de empurrar a língua toda para o mesmo lado (anterior):
-  empurrar radialmente fecha o canal com uma parede de triângulos esticados.
+  empurrar radialmente fecha o canal com uma parede de triângulos esticados; suavizar o deslocamento pela
+  malha também piorou. Triângulos muito esticados no istmo deixam de ser desenhados (índice alternativo) e,
+  na visão pela boca, a pele vira mucosa escura (`setInsideView`) e a periferia escurece (`setScopeView`).
+  A placa de "assoalho da boca" da malha de dentes do MakeHuman foi removida (`trimMouthFloor`): tapava a visão.
 - **Depuração visual:** `debugSection(x)` corta a cena num plano sagital e `debugMarks(pontos)` marca pontos;
   foi o que permitiu acertar a laringoscopia (olhar o corte, não adivinhar).
 - **Controles:** mouse aponta (destaque + dica), clique age com a mão ativa, Tab troca a mão ativa,
